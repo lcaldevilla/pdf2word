@@ -16,3 +16,6 @@ python-magic==0.4.27
 
 # Especificar versión compatible de pymupdf para pdf2docx
 pymupdf==1.23.8
+
+# Forzar NumPy versión 1.x para compatibilidad con OpenCV
+numpy<2
