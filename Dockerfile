@@ -1,26 +1,34 @@
-# Usar la imagen slim, que es más ligera y rápida
+# Usar imagen slim
 FROM python:3.9-slim
 
-# Establecer el directorio de trabajo
+# Actualizar e instalar dependencias del sistema necesarias para OpenCV
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Establecer directorio de trabajo
 WORKDIR /app
 
-# Copiar primero el archivo de dependencias para aprovechar el cache de Docker
+# Copiar requirements.txt primero (para caché)
 COPY requirements.txt .
 
-# Instalar las dependencias de Python
+# Instalar dependencias de Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el resto del código de la aplicación
+# Copiar el código
 COPY . .
 
-# Exponer el puerto en el que correrá la aplicación
+# Variables de entorno para OpenCV (headless)
+ENV OPENCV_IO_ENABLE_OPENEXR=1
+# Ya no necesitas DISPLAY=:99 si no usas Xvfb
+
+# Puerto
 EXPOSE 8000
 
-# --- EL TRUCO ---
-# Establecemos variables de entorno para forzar a OpenCV a funcionar en modo headless
-# Esto evita que intente cargar librerías gráficas como libGL.so.1
-ENV OPENCV_IO_ENABLE_OPENEXR=1
-ENV DISPLAY=:99
-
-# El comando para ejecutar la aplicación cuando el contenedor se inicie
+# Ejecutar con uvicorn
 CMD ["uvicorn", "api.convert:app", "--host", "0.0.0.0", "--port", "8000"]
