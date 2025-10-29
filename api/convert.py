@@ -4,6 +4,7 @@ import io
 import base64
 import json
 import email
+import tempfile
 from email import policy
 from email.message import EmailMessage
 from sendgrid import SendGridAPIClient
@@ -23,32 +24,51 @@ app = FastAPI()
 def convertir_pdf_a_docx_en_memoria(pdf_bytes: bytes) -> bytes:
     print(f"Iniciando conversión, tamaño del PDF: {len(pdf_bytes)} bytes")
     
-    # Crear el stream para el PDF y asegurar que el puntero está al inicio
-    pdf_stream = io.BytesIO(pdf_bytes)
-    pdf_stream.seek(0)  # Asegurar que el puntero está al inicio
+    # Crear archivos temporales
+    pdf_temp_path = None
+    docx_temp_path = None
     
-    docx_stream = io.BytesIO()
     try:
+        # Crear archivo temporal para el PDF
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as pdf_temp_file:
+            pdf_temp_file.write(pdf_bytes)
+            pdf_temp_path = pdf_temp_file.name
+        
+        print(f"PDF temporal creado en: {pdf_temp_path}")
+        
+        # Crear ruta para archivo DOCX temporal
+        docx_temp_path = pdf_temp_path.replace('.pdf', '.docx')
+        
         print("Creando converter...")
-        cv = Converter(pdf_stream)
+        cv = Converter(pdf_temp_path)
         print("Iniciando conversión...")
-        cv.convert(docx_stream)
+        cv.convert(docx_temp_path)
         cv.close()
         
-        # Asegurar que el puntero del stream de salida esté al inicio
-        docx_stream.seek(0)
-        docx_bytes = docx_stream.getvalue()
+        print(f"DOCX temporal creado en: {docx_temp_path}")
+        
+        # Leer el archivo DOCX resultante
+        with open(docx_temp_path, 'rb') as docx_file:
+            docx_bytes = docx_file.read()
         
         print(f"Conversión completada, tamaño del DOCX: {len(docx_bytes)} bytes")
         return docx_bytes
+        
     except Exception as e:
         print(f"Error durante la conversión PDF a DOCX: {e}")
         import traceback
         traceback.print_exc()
         raise e
+        
     finally:
-        pdf_stream.close()
-        docx_stream.close()
+        # Limpiar archivos temporales
+        for temp_path in [pdf_temp_path, docx_temp_path]:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                    print(f"Archivo temporal eliminado: {temp_path}")
+                except Exception as cleanup_error:
+                    print(f"Error al eliminar archivo temporal {temp_path}: {cleanup_error}")
 
 # --- ENDPOINT DE LA API ---
 @app.post("/api/convert")
