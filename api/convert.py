@@ -19,19 +19,32 @@ SENDGRID_SENDER_EMAIL = os.environ.get("SENDGRID_SENDER_EMAIL")
 # Crear la aplicación FastAPI
 app = FastAPI()
 
-# --- LÓGICA DE CONVERSIÓN (sin cambios) ---
+# --- LÓGICA DE CONVERSIÓN ---
 def convertir_pdf_a_docx_en_memoria(pdf_bytes: bytes) -> bytes:
-    # ... (el código de esta función es exactamente el mismo que antes) ...
+    print(f"Iniciando conversión, tamaño del PDF: {len(pdf_bytes)} bytes")
+    
+    # Crear el stream para el PDF y asegurar que el puntero está al inicio
     pdf_stream = io.BytesIO(pdf_bytes)
+    pdf_stream.seek(0)  # Asegurar que el puntero está al inicio
+    
     docx_stream = io.BytesIO()
     try:
+        print("Creando converter...")
         cv = Converter(pdf_stream)
+        print("Iniciando conversión...")
         cv.convert(docx_stream)
         cv.close()
+        
+        # Asegurar que el puntero del stream de salida esté al inicio
+        docx_stream.seek(0)
         docx_bytes = docx_stream.getvalue()
+        
+        print(f"Conversión completada, tamaño del DOCX: {len(docx_bytes)} bytes")
         return docx_bytes
     except Exception as e:
         print(f"Error durante la conversión PDF a DOCX: {e}")
+        import traceback
+        traceback.print_exc()
         raise e
     finally:
         pdf_stream.close()
