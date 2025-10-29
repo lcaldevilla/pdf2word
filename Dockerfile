@@ -2,9 +2,9 @@
 FROM python:3.9-slim
 
 # Instalar dependencias del sistema operativo que necesita OpenCV
-# libgl1-mesa-glx: Proporciona la librería libGL.so.1 que falta
-# libglib2.0-0 y libsm6: Otras dependencias comunes de OpenCV para evitar errores futuros
-RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6
+# libgl1-mesa-dri: El paquete moderno que proporciona libGL.so.1
+# libglib2.0-0, libsm6, libxext6, libxrender-dev: Otras dependencias comunes de OpenCV
+RUN apt-get update && apt-get install -y libgl1-mesa-dri libglib2.0-0 libsm6 libxext6 libxrender-dev
 
 # Establecer el directorio de trabajo
 WORKDIR /app
