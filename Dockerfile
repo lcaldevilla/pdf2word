@@ -1,6 +1,5 @@
-# Usar la imagen estándar de Python, no la slim.
-# Es más grande, pero incluye las librerías del sistema que OpenCV necesita.
-FROM python:3.9
+# Volvemos a la imagen slim, que es más ligera y rápida
+FROM python:3.9-slim
 
 # Establecer el directorio de trabajo
 WORKDIR /app

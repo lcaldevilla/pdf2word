@@ -6,3 +6,7 @@ uvicorn[standard]==0.24.0
 pdf2docx==0.5.6
 sendgrid==6.10.0
 python-multipart==0.0.6
+
+# ¡LA CLAVE! Forzamos la instalación de la versión headless de OpenCV
+# que no necesita librerías gráficas y es ideal para servidores.
+opencv-python-headless==4.8.1.78
