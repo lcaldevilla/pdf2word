@@ -1,3 +1,8 @@
+# Dependencias del Servidor Web
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Dependencias de la Lógica de Negocio
 pdf2docx==0.5.6
 sendgrid==6.10.0
 python-multipart==0.0.6
