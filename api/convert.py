@@ -98,3 +98,9 @@ async def handler(request: Request):
     except Exception as e:
         print(f"Error general en el handler: {e}")
         return PlainTextResponse("Internal Server Error", status_code=500)
+
+# ... (todo tu código existente) ...
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
