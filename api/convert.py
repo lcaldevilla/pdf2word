@@ -22,7 +22,7 @@ app = FastAPI()
 
 # --- LÓGICA DE CONVERSIÓN ---
 def convertir_pdf_a_docx_en_memoria(pdf_bytes: bytes) -> bytes:
-    print(f"Iniciando conversión, tamaño del PDF: {len(pdf_bytes)} bytes")
+    print(f"Iniciando conversión optimizada, tamaño del PDF: {len(pdf_bytes)} bytes")
     
     # Crear archivos temporales
     pdf_temp_path = None
@@ -39,10 +39,25 @@ def convertir_pdf_a_docx_en_memoria(pdf_bytes: bytes) -> bytes:
         # Crear ruta para archivo DOCX temporal
         docx_temp_path = pdf_temp_path.replace('.pdf', '.docx')
         
-        print("Creando converter...")
+        print("Creando converter con parámetros optimizados...")
         cv = Converter(pdf_temp_path)
-        print("Iniciando conversión...")
-        cv.convert(docx_temp_path)
+        
+        # Configuración optimizada para mejor calidad
+        print("Aplicando configuración optimizada para gráficos y formato...")
+        conversion_settings = {
+            'multi_processing': False,      # Más preciso, menos rápido
+            'formatting': True,            # Mejor preservación de formato
+            'debug': True,                 # Habilitar debug para diagnóstico
+            'start': 0,                    # Página inicial
+            'end': None,                   # Página final (None = todas)
+            'pages': None,                 # Páginas a convertir (None = todas)
+        }
+        
+        print(f"Configuración de conversión: {conversion_settings}")
+        print("Iniciando conversión optimizada...")
+        
+        # Realizar la conversión con parámetros optimizados
+        cv.convert(docx_temp_path, **conversion_settings)
         cv.close()
         
         print(f"DOCX temporal creado en: {docx_temp_path}")
@@ -51,7 +66,7 @@ def convertir_pdf_a_docx_en_memoria(pdf_bytes: bytes) -> bytes:
         with open(docx_temp_path, 'rb') as docx_file:
             docx_bytes = docx_file.read()
         
-        print(f"Conversión completada, tamaño del DOCX: {len(docx_bytes)} bytes")
+        print(f"Conversión optimizada completada, tamaño del DOCX: {len(docx_bytes)} bytes")
         return docx_bytes
         
     except Exception as e:
