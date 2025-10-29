@@ -2,11 +2,12 @@
 import os
 import io
 import base64
+import json
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 from pdf2docx import Converter
 from fastapi import FastAPI, Request, Response, Form, File, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 
 # --- CONFIGURACIÓN INICIAL ---
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
@@ -37,25 +38,67 @@ def convertir_pdf_a_docx_en_memoria(pdf_bytes: bytes) -> bytes:
 @app.post("/api/convert")
 async def handler(request: Request):
     try:
-        # FastAPI puede parsear el form-data de SendGrid automáticamente
-        form = await request.form()
+        # Parsear JSON de SendGrid Inbound Parse
+        print("Recibiendo solicitud...")
+        data = await request.json()
+        print(f"Datos recibidos: {json.dumps(data, indent=2)}")
         
-        from_email = form.get('from', '').strip()
-        subject = form.get('subject', '').lower()
+        # Extraer datos del JSON de SendGrid
+        from_email = data.get('from', '').strip()
+        subject = data.get('subject', '').lower()
+        attachments = data.get('attachments', [])
         
-        # El fichero está en la clave 'file1'
-        file_info = form.get('file1')
-        if not file_info or not isinstance(file_info, UploadFile):
-            return PlainTextResponse("No file found in request", status_code=400)
-
-        original_filename = file_info.filename
-        file_buffer = await file_info.read()
-
-        print(f"Recibido: {original_filename} de {from_email}")
+        print(f"Email de: {from_email}")
+        print(f"Asunto: {subject}")
+        print(f"Número de adjuntos: {len(attachments)}")
+        
+        # Validar datos básicos
+        if not from_email:
+            print("Error: No se encontró email remitente")
+            return JSONResponse({"error": "No from email found"}, status_code=400)
+        
+        if not attachments:
+            print("Error: No se encontraron archivos adjuntos")
+            return JSONResponse({"error": "No attachments found"}, status_code=400)
+        
+        # Buscar el primer archivo PDF en los adjuntos
+        pdf_attachment = None
+        for attachment in attachments:
+            filename = attachment.get('filename', '').lower()
+            if filename and filename.endswith('.pdf'):
+                pdf_attachment = attachment
+                break
+        
+        if not pdf_attachment:
+            print("Error: No se encontró ningún archivo PDF")
+            return JSONResponse({"error": "No PDF file found"}, status_code=400)
+        
+        # Extraer información del archivo
+        original_filename = pdf_attachment.get('filename', 'documento.pdf')
+        file_content_base64 = pdf_attachment.get('content', '')
+        content_type = pdf_attachment.get('type', 'application/pdf')
+        
+        print(f"Archivo encontrado: {original_filename}")
+        print(f"Tipo de contenido: {content_type}")
+        
+        # Validar que sea un PDF
+        if not original_filename.lower().endswith('.pdf'):
+            print("Error: El archivo no es un PDF")
+            return JSONResponse({"error": "File is not a PDF"}, status_code=400)
+        
+        # Decodificar el contenido base64
+        try:
+            file_buffer = base64.b64decode(file_content_base64)
+            print(f"Archivo decodificado, tamaño: {len(file_buffer)} bytes")
+        except Exception as e:
+            print(f"Error al decodificar el archivo: {e}")
+            return JSONResponse({"error": "Failed to decode file"}, status_code=400)
 
         # 2. VALIDACIÓN
         is_pdf = original_filename.lower().endswith('.pdf')
         wants_docx = 'word' in subject or 'docx' in subject
+
+        print(f"Es PDF: {is_pdf}, Quiere DOCX: {wants_docx}")
 
         if not is_pdf or not wants_docx:
             print("El fichero no es un PDF o no se pidió conversión a Word. No se hace nada.")
@@ -91,13 +134,16 @@ async def handler(request: Request):
             print(f"Email enviado! Status code: {response.status_code}")
         except Exception as e:
             print(f"Error al enviar email con SendGrid: {e}")
-            return PlainTextResponse("Error sending email", status_code=500)
+            return JSONResponse({"error": "Error sending email"}, status_code=500)
 
         return PlainTextResponse("OK", status_code=200)
 
+    except json.JSONDecodeError as e:
+        print(f"Error al parsear JSON: {e}")
+        return JSONResponse({"error": "Invalid JSON format"}, status_code=400)
     except Exception as e:
         print(f"Error general en el handler: {e}")
-        return PlainTextResponse("Internal Server Error", status_code=500)
+        return JSONResponse({"error": f"Internal server error: {str(e)}"}, status_code=500)
 
 # ... (todo tu código existente) ...
 
