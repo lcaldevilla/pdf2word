@@ -1,20 +1,20 @@
-# Usar imagen slim
+# Imagen base ligera
 FROM python:3.9-slim
 
-# Actualizar e instalar dependencias del sistema necesarias para OpenCV
+# Instalar dependencias del sistema necesarias para OpenCV (headless)
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender-dev \
     libgomp1 \
+    libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
-# Establecer directorio de trabajo
+# Directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements.txt primero (para caché)
+# Copiar requirements.txt primero (caché)
 COPY requirements.txt .
 
 # Instalar dependencias de Python
@@ -23,11 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar el código
 COPY . .
 
-# Variables de entorno para OpenCV (headless)
-ENV OPENCV_IO_ENABLE_OPENEXR=1
-# Ya no necesitas DISPLAY=:99 si no usas Xvfb
-
-# Puerto
+# Exponer puerto
 EXPOSE 8000
 
 # Ejecutar con uvicorn
