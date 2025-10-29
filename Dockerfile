@@ -1,4 +1,4 @@
-# Imagen base
+# Imagen base ligera
 FROM python:3.9-slim
 
 # Instalar dependencias del sistema para OpenCV (headless)
@@ -8,23 +8,23 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgomp1 \
-    libgl1 \                 # ← ¡AQUÍ ESTÁ EL CAMBIO!
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements.txt
+# Copiar requirements.txt (para caché)
 COPY requirements.txt .
 
-# Instalar Python deps
+# Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar app
+# Copiar el resto del código
 COPY . .
 
-# Puerto
+# Exponer puerto
 EXPOSE 8000
 
-# Ejecutar
+# Ejecutar la app
 CMD ["uvicorn", "api.convert:app", "--host", "0.0.0.0", "--port", "8000"]
