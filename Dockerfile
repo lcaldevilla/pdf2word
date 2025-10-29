@@ -1,10 +1,16 @@
 # Usar una imagen oficial de Python como base
 FROM python:3.9-slim
 
-# Instalar dependencias del sistema operativo que necesita OpenCV
-# libgl1-mesa-dri: El paquete moderno que proporciona libGL.so.1
-# libglib2.0-0, libsm6, libxext6, libxrender-dev: Otras dependencias comunes de OpenCV
-RUN apt-get update && apt-get install -y libgl1-mesa-dri libglib2.0-0 libsm6 libxext6 libxrender-dev
+# Instalar un conjunto robusto de dependencias del sistema operativo para OpenCV
+# Esta combinación cubre la mayoría de los requisitos de OpenCV en diferentes versiones de Debian
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Establecer el directorio de trabajo
 WORKDIR /app
