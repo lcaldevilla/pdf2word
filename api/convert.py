@@ -1,15 +1,13 @@
 # api/convert.py
 import os
-import io
 import base64
 import json
 import email
-import tempfile
+import requests
 from email import policy
 from email.message import EmailMessage
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-from pdf2docx import Converter
 from fastapi import FastAPI, Request, Response, Form, File, UploadFile
 from fastapi.responses import PlainTextResponse, JSONResponse
 
@@ -21,69 +19,47 @@ SENDGRID_SENDER_EMAIL = os.environ.get("SENDGRID_SENDER_EMAIL")
 app = FastAPI()
 
 # --- LÓGICA DE CONVERSIÓN ---
-def convertir_pdf_a_docx_en_memoria(pdf_bytes: bytes) -> bytes:
-    print(f"Iniciando conversión optimizada, tamaño del PDF: {len(pdf_bytes)} bytes")
+def convert_with_self_hosted_server(pdf_content, pdf_filename):
+    """
+    Convierte un PDF a DOCX usando el servicio LibreOffice auto-alojado
+    """
+    # Obtener variables de entorno
+    api_url = os.getenv("CONVERSION_API_URL")
+    api_key = os.getenv("CONVERSION_API_KEY")
+
+    if not api_url:
+        raise ValueError("Error: La variable de entorno CONVERSION_API_URL no está configurada")
     
-    # Crear archivos temporales
-    pdf_temp_path = None
-    docx_temp_path = None
+    if not api_key:
+        raise ValueError("Error: La variable de entorno CONVERSION_API_KEY no está configurada")
+    
+    headers = {"X-API-Key": api_key}
+    files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
     
     try:
-        # Crear archivo temporal para el PDF
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as pdf_temp_file:
-            pdf_temp_file.write(pdf_bytes)
-            pdf_temp_path = pdf_temp_file.name
+        print(f"Enviando {pdf_filename} a {api_url}")
+        response = requests.post(api_url, files=files, headers=headers, timeout=120)
+        response.raise_for_status()
         
-        print(f"PDF temporal creado en: {pdf_temp_path}")
+        # Validar que la respuesta sea un archivo DOCX válido
+        content_type = response.headers.get('content-type', '').lower()
+        expected_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         
-        # Crear ruta para archivo DOCX temporal
-        docx_temp_path = pdf_temp_path.replace('.pdf', '.docx')
+        if expected_type not in content_type:
+            print(f"Advertencia: Content-Type inesperado: {content_type}")
         
-        print("Creando converter con parámetros optimizados...")
-        cv = Converter(pdf_temp_path)
+        docx_content = response.content
         
-        # Configuración optimizada para mejor calidad
-        print("Aplicando configuración optimizada para gráficos y formato...")
-        conversion_settings = {
-            'multi_processing': False,      # Más preciso, menos rápido
-            'formatting': True,            # Mejor preservación de formato
-            'debug': True,                 # Habilitar debug para diagnóstico
-            'start': 0,                    # Página inicial
-            'end': None,                   # Página final (None = todas)
-            'pages': None,                 # Páginas a convertir (None = todas)
-        }
+        if not docx_content:
+            raise ValueError("El servidor devolvió una respuesta vacía")
         
-        print(f"Configuración de conversión: {conversion_settings}")
-        print("Iniciando conversión optimizada...")
+        print(f"Conversión exitosa. Tamaño DOCX: {len(docx_content)} bytes")
+        return docx_content
         
-        # Realizar la conversión con parámetros optimizados
-        cv.convert(docx_temp_path, **conversion_settings)
-        cv.close()
-        
-        print(f"DOCX temporal creado en: {docx_temp_path}")
-        
-        # Leer el archivo DOCX resultante
-        with open(docx_temp_path, 'rb') as docx_file:
-            docx_bytes = docx_file.read()
-        
-        print(f"Conversión optimizada completada, tamaño del DOCX: {len(docx_bytes)} bytes")
-        return docx_bytes
-        
-    except Exception as e:
-        print(f"Error durante la conversión PDF a DOCX: {e}")
-        import traceback
-        traceback.print_exc()
-        raise e
-        
-    finally:
-        # Limpiar archivos temporales
-        for temp_path in [pdf_temp_path, docx_temp_path]:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                    print(f"Archivo temporal eliminado: {temp_path}")
-                except Exception as cleanup_error:
-                    print(f"Error al eliminar archivo temporal {temp_path}: {cleanup_error}")
+    except requests.exceptions.Timeout:
+        raise Exception(f"Timeout llamando al servicio de conversión después de 120 segundos")
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Error llamando al servicio de conversión: {e}")
 
 # --- ENDPOINT DE LA API ---
 @app.post("/api/convert")
@@ -177,8 +153,8 @@ async def handler(request: Request):
             return PlainTextResponse("OK", status_code=200)
 
         # 3. CONVERSIÓN
-        print("Iniciando conversión a DOCX...")
-        docx_buffer = convertir_pdf_a_docx_en_memoria(file_buffer)
+        print("Iniciando conversión a DOCX con servicio externo...")
+        docx_buffer = convert_with_self_hosted_server(file_buffer, original_filename)
         print("Conversión completada.")
 
         # 4. ENVÍO DEL EMAIL DE RESPUESTA
@@ -216,7 +192,6 @@ async def handler(request: Request):
         traceback.print_exc()
         return JSONResponse({"error": f"Internal server error: {str(e)}"}, status_code=500)
 
-# ... (todo tu código existente) ...
 
 @app.get("/health")
 async def health_check():

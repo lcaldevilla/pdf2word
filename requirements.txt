@@ -3,19 +3,9 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
 # Dependencias de la Lógica de Negocio
-pdf2docx==0.5.8
 sendgrid==6.10.0
 python-multipart==0.0.6
-
-# ¡LA CLAVE! Forzamos la instalación de la versión headless de OpenCV
-# que no necesita librerías gráficas y es ideal para servidores.
-opencv-python-headless==4.8.1.78
+requests==2.31.0
 
 # Dependencias para parsear MIME de SendGrid
 python-magic==0.4.27
-
-# Especificar versión compatible de pymupdf para pdf2docx
-pymupdf==1.23.8
-
-# Forzar NumPy versión 1.x para compatibilidad con OpenCV
-numpy<2
