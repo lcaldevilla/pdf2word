@@ -7,13 +7,12 @@ WORKDIR /app
 # Copiar requirements.txt (para caché)
 COPY requirements.txt .
 
-# Instalar dependencias del sistema y LibreOffice completo con filtros
+# Instalar dependencias del sistema y LibreOffice básico (paquetes existentes)
 RUN apt-get update && apt-get install -y \
     libreoffice \
     libreoffice-writer \
     libreoffice-core \
     libreoffice-common \
-    libreoffice-filter-bin \
     libreoffice-java-common \
     && rm -rf /var/lib/apt/lists/*
 

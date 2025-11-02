@@ -7,15 +7,15 @@ WORKDIR /app
 # Copiar requirements.txt (para caché)
 COPY requirements.txt .
 
-# Instalar dependencias del sistema y LibreOffice con manejo de errores y filtros
+# Instalar dependencias del sistema y LibreOffice con manejo de errores
 RUN apt-get update && \
-    # Intentar instalación completa primero (con filtros)
+    # Intentar instalación completa primero (sin paquetes problemáticos)
     apt-get install -y --no-install-recommends \
         libreoffice \
         libreoffice-writer \
         libreoffice-core \
         libreoffice-common \
-        libreoffice-filter-bin \
+        libreoffice-java-common \
         unoconv && \
     # Si funciona, verificar y limpiar
     soffice --version && \
