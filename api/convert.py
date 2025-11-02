@@ -162,11 +162,50 @@ def convert_pdf_to_docx_local(pdf_content, pdf_filename):
                 error_output = result.stderr or result.stdout
                 raise Exception(f"Error en LibreOffice (código {result.returncode}): {error_output}")
             
-            # Buscar el archivo DOCX generado
-            docx_files = [f for f in os.listdir(temp_dir) if f.endswith('.docx')]
+            # Listar todos los archivos en el directorio para debugging
+            all_files = os.listdir(temp_dir)
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Archivos en directorio temporal: {all_files}")
+            
+            # Buscar cualquier archivo DOCX generado por LibreOffice
+            docx_files = [f for f in all_files if f.lower().endswith('.docx')]
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Archivos DOCX encontrados: {docx_files}")
+            
+            # Si no encuentra .docx, buscar otros archivos que LibreOffice pudo crear
+            if not docx_files:
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Buscando archivos alternativos...")
+                # Buscar archivos sin extensión o con extensiones inesperadas
+                alternative_files = [f for f in all_files if not f.endswith('.pdf')]
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Archivos alternativos: {alternative_files}")
+                
+                # Intentar renombrar el primer archivo alternativo a .docx
+                if alternative_files:
+                    alt_file = alternative_files[0]
+                    alt_path = os.path.join(temp_dir, alt_file)
+                    
+                    # Si el archivo no tiene extensión, asumir que es el DOCX
+                    if '.' not in alt_file:
+                        new_name = alt_file + '.docx'
+                        new_path = os.path.join(temp_dir, new_name)
+                        os.rename(alt_path, new_path)
+                        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Renombrando '{alt_file}' a '{new_name}'")
+                        docx_files = [new_name]
+                    else:
+                        # Si tiene extensión diferente, cambiarla a .docx
+                        base_name = os.path.splitext(alt_file)[0]
+                        new_name = base_name + '.docx'
+                        new_path = os.path.join(temp_dir, new_name)
+                        os.rename(alt_path, new_path)
+                        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Cambiando extensión de '{alt_file}' a '{new_name}'")
+                        docx_files = [new_name]
             
             if not docx_files:
-                raise Exception("No se encontró el archivo DOCX generado")
+                # Último intento: buscar el archivo más reciente que no sea el PDF original
+                non_pdf_files = [f for f in all_files if not f.endswith('.pdf')]
+                if non_pdf_files:
+                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Usando último archivo disponible: {non_pdf_files[0]}")
+                    docx_files = [non_pdf_files[0]]
+                else:
+                    raise Exception(f"No se encontró el archivo DOCX generado. Archivos en directorio: {all_files}")
             
             docx_path = os.path.join(temp_dir, docx_files[0])
             
