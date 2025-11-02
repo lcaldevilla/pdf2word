@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 API_KEY = "yW22q7[+4h0" 
 
 # Configuración para almacenamiento temporal
-TEMP_DIR = "temp_files"
+TEMP_DIR = "/op/conversion-api/temp_files"
 MAX_FILE_SIZE_MB = 25  # Límite para envío directo por email
 FILE_EXPIRY_HOURS = 24  # Tiempo de vida de los archivos temporales
 

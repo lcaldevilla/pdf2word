@@ -106,150 +106,87 @@ def handle_conversion_timeout(pdf_filename, from_email, timeout_used):
         print(f"Error enviando email de timeout: {e}")
         return False
 
-def convert_with_self_hosted_server(pdf_content, pdf_filename):
+def convert_pdf_to_docx_local(pdf_content, pdf_filename):
     """
-    Convierte un PDF a DOCX usando el servicio LibreOffice auto-alojado
-    Retorna: (docx_content, download_info) donde download_info es None o un dict con info de descarga
+    Convierte un PDF a DOCX usando LibreOffice instalado localmente
+    Retorna: (docx_content, download_info) donde download_info siempre es None (conversión local)
     """
+    import subprocess
+    import tempfile
+    import os
     from datetime import datetime
-    
-    # Obtener variables de entorno
-    api_url = os.getenv("CONVERSION_API_URL")
-    api_key = os.getenv("CONVERSION_API_KEY")
-    max_size_mb = int(os.getenv("MAX_FILE_SIZE_MB", "25"))
-
-    if not api_url:
-        raise ValueError("Error: La variable de entorno CONVERSION_API_URL no esta configurada")
-    
-    if not api_key:
-        raise ValueError("Error: La variable de entorno CONVERSION_API_KEY no esta configurada")
-    
-    headers = {"api-key": api_key}
-    files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
     
     # Calcular timeout dinámico
     timeout = calculate_timeout(pdf_content)
     
-    # Determinar si usar conversión directa o almacenamiento temporal
-    # Primero intentamos la conversión normal para ver el tamaño
     try:
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Iniciando conversión de {pdf_filename} (timeout: {timeout}s)")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Conectando a: {api_url}")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Iniciando conversión local de {pdf_filename} (timeout: {timeout}s)")
         
-        # Medir tiempo de conexión específicamente
-        connection_start = time.time()
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Enviando solicitud HTTP...")
-        
-        response = requests.post(api_url, files=files, headers=headers, timeout=timeout)
-        
-        connection_time = time.time() - connection_start
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Respuesta recibida en {connection_time:.2f}s")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Status Code: {response.status_code}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Content-Type: {response.headers.get('content-type', 'N/A')}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Content-Length: {response.headers.get('content-length', 'N/A')}")
-        
-        response.raise_for_status()
-        
-        # Verificar si es una respuesta JSON (archivo grande) o archivo binario
-        content_type = response.headers.get('content-type', '').lower()
-        
-        if 'application/json' in content_type:
-            # Es un archivo grande, nos devuelve información de descarga
-            download_info = response.json()
-            print(f"Archivo grande, proporcionando enlace de descarga: {download_info}")
-            return None, download_info
-        else:
-            # Es un archivo directo, verificar tamaño
-            expected_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        # Crear directorio temporal
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Guardar PDF en archivo temporal
+            pdf_path = os.path.join(temp_dir, pdf_filename)
+            with open(pdf_path, 'wb') as f:
+                f.write(pdf_content)
             
-            if expected_type not in content_type:
-                print(f"Advertencia: Content-Type inesperado: {content_type}")
+            # Determinar nombre del archivo de salida
+            output_filename = pdf_filename.replace('.pdf', '.docx')
+            output_path = os.path.join(temp_dir, output_filename)
             
-            docx_content = response.content
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Convirtiendo {pdf_filename} a {output_filename}")
             
-            if not docx_content:
-                raise ValueError("El servidor devolvio una respuesta vacía")
+            # Ejecutar LibreOffice para convertir el PDF
+            command = [
+                'libreoffice',
+                '--headless',
+                '--convert-to', 'docx',
+                '--outdir', temp_dir,
+                pdf_path
+            ]
+            
+            # Medir tiempo de conversión
+            conversion_start = time.time()
+            result = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            conversion_time = time.time() - conversion_start
+            
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Conversión local completada en {conversion_time:.2f}s")
+            
+            # Verificar si la conversión fue exitosa
+            if result.returncode != 0:
+                error_output = result.stderr or result.stdout
+                raise Exception(f"Error en LibreOffice (código {result.returncode}): {error_output}")
+            
+            # Buscar el archivo DOCX generado
+            docx_files = [f for f in os.listdir(temp_dir) if f.endswith('.docx')]
+            
+            if not docx_files:
+                raise Exception("No se encontró el archivo DOCX generado")
+            
+            docx_path = os.path.join(temp_dir, docx_files[0])
+            
+            # Leer el archivo DOCX generado
+            with open(docx_path, 'rb') as f:
+                docx_content = f.read()
             
             # Verificar tamaño
             file_size_mb = len(docx_content) / (1024 * 1024)
-            print(f"Conversión directa exitosa. Tamaño DOCX: {file_size_mb:.2f} MB")
-            
-            if file_size_mb > max_size_mb:
-                # Archivo muy grande, intentar almacenamiento temporal
-                print(f"Archivo demasiado grande ({file_size_mb:.2f}MB > {max_size_mb}MB), intentando almacenamiento temporal")
-                return convert_and_store_large_file(pdf_content, pdf_filename, api_url, api_key)
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Conversión local exitosa. Tamaño DOCX: {file_size_mb:.2f} MB")
             
             return docx_content, None
         
-    except requests.exceptions.Timeout:
-        print(f"Timeout de {timeout} segundos alcanzado para {pdf_filename}")
-        # En lugar de lanzar excepción, manejar amigablemente
-        # Para esto necesitaríamos el email del destinatario, pero no lo tenemos aquí
-        # Así que lanzamos una excepción más informativa
+    except subprocess.TimeoutExpired:
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Timeout de {timeout} segundos alcanzado para {pdf_filename}")
         raise Exception(f"El archivo {pdf_filename} esta tardando mas de {timeout} segundos en procesarse. Por favor, intenta de nuevo en unos minutos o considera comprimir el PDF antes de convertirlo.")
         
-    except requests.exceptions.RequestException as e:
-        # Capturar detalles específicos del error 422
-        from datetime import datetime
-        
-        if hasattr(e, 'response') and e.response is not None:
-            status_code = e.response.status_code
-            content_type = e.response.headers.get('content-type', '')
-            
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error HTTP {status_code}")
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Content-Type: {content_type}")
-            
-            try:
-                if 'application/json' in content_type:
-                    error_details = e.response.json()
-                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error JSON: {error_details}")
-                    
-                    # Si es error 422, dar detalles específicos
-                    if status_code == 422:
-                        detail = error_details.get('detail', str(error_details))
-                        raise Exception(f"Error 422 del servidor: {detail}")
-                    
-                    raise Exception(f"Error del servidor {status_code}: {error_details}")
-                else:
-                    error_text = e.response.text
-                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error texto: {error_text}")
-                    
-                    if status_code == 422:
-                        raise Exception(f"Error 422 del servidor: {error_text}")
-                    
-                    raise Exception(f"Error del servidor {status_code}: {error_text}")
-            except:
-                error_text = e.response.text
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error texto (fallback): {error_text[:200]}")
-                
-                if status_code == 422:
-                    raise Exception(f"Error 422 del servidor: {error_text[:100]}")
-                
-                raise Exception(f"Error del servidor {status_code}: {error_text[:100]}")
-        
-        raise Exception(f"Error llamando al servicio de conversion: {e}")
-
-def convert_and_store_large_file(pdf_content, pdf_filename, api_url, api_key):
-    """
-    Convierte y almacena un archivo grande usando el endpoint de almacenamiento temporal
-    """
-    headers = {"api-key": api_key}
-    files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
-    
-    # Usar el endpoint de almacenamiento temporal
-    store_url = api_url.replace('/convert', '/convert-and-store')
-    
-    try:
-        print(f"Enviando archivo grande a almacenamiento temporal: {store_url}")
-        response = requests.post(store_url, files=files, headers=headers, timeout=180)
-        response.raise_for_status()
-        
-        download_info = response.json()
-        print(f"Archivo almacenado exitosamente: {download_info}")
-        return None, download_info
-        
-    except requests.exceptions.RequestException as e:
-        raise Exception(f"Error almacenando archivo temporal: {e}")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error en conversión local: {e}")
+        raise Exception(f"Error en la conversión local: {e}")
 
 # --- ENDPOINT DE LA API ---
 @app.post("/api/convert")
@@ -347,28 +284,24 @@ async def handler(request: Request):
             return PlainTextResponse("OK", status_code=200)
 
         # 3. CONVERSIÓN
-        print("Iniciando conversión a DOCX con servicio externo...")
+        print("Iniciando conversión a DOCX localmente con LibreOffice...")
         
         # Medir tiempo de conversión
         conversion_start_time = time.time()
         
         try:
-            docx_buffer, download_info = convert_with_self_hosted_server(file_buffer, sanitized_filename)
+            docx_buffer, download_info = convert_pdf_to_docx_local(file_buffer, sanitized_filename)
             conversion_end_time = time.time()
             conversion_duration = conversion_end_time - conversion_start_time
             
             print(f"Conversión completada en {conversion_duration:.2f} segundos.")
             
             # Log detallado del resultado
-            if download_info:
-                print(f"Resultado: Archivo grande - Enlace generado")
-                print(f"Info: Tamaño={download_info.get('size_mb', 'N/A')}MB, Expira={download_info.get('expires_at', 'N/A')}")
+            if docx_buffer:
+                docx_size = len(docx_buffer) / (1024 * 1024)
+                print(f"Resultado: Conversión local exitosa - {docx_size:.2f}MB adjunto")
             else:
-                if docx_buffer:
-                    docx_size = len(docx_buffer) / (1024 * 1024)
-                    print(f"Resultado: Archivo pequeño - {docx_size:.2f}MB adjunto")
-                else:
-                    print("Resultado: Error - No se generó archivo")
+                print("Resultado: Error - No se generó archivo")
         except Exception as e:
             # Verificar si es un error de timeout
             error_msg = str(e)
@@ -392,50 +325,22 @@ async def handler(request: Request):
         # 4. ENVÍO DEL EMAIL DE RESPUESTA
         output_filename = f"{original_filename.split('.')[0]}.docx"
         
-        if download_info:
-            # Archivo grande - enviar enlace de descarga
-            base_url = os.getenv("CONVERSION_API_URL", "").replace('/convert', '')
-            download_url = f"{base_url}{download_info['download_url']}"
-            expires_at = download_info['expires_at']
-            size_mb = download_info['size_mb']
-            
-            message = Mail(
-                from_email=SENDGRID_SENDER_EMAIL,
-                to_emails=from_email,
-                subject=f"Tu fichero convertido: {output_filename}",
-                html_content=f"""
-                <strong>Hola,</strong><br><br>
-                Hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br><br>
-                
-                <strong>Información del archivo:</strong><br>
-                • Nombre: {output_filename}<br>
-                • Tamaño: {size_mb} MB<br>
-                • Válido hasta: {expires_at}<br><br>
-                
-                El archivo es demasiado grande para enviarlo por email, pero puedes descargarlo desde el siguiente enlace:<br><br>
-                
-                <a href="{download_url}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Descargar Archivo</a><br><br>
-                
-                <small><em>Este enlace expirará en 24 horas por seguridad.</em></small>
-                """
-            )
-        else:
-            # Archivo pequeño - enviar adjunto directo
-            message = Mail(
-                from_email=SENDGRID_SENDER_EMAIL,
-                to_emails=from_email,
-                subject=f"Tu fichero convertido: {output_filename}",
-                html_content=f"<strong>Hola,</strong><br>hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br>Puedes descargarlo adjunto en este correo."
-            )
+        # Archivo convertido - enviar adjunto directo
+        message = Mail(
+            from_email=SENDGRID_SENDER_EMAIL,
+            to_emails=from_email,
+            subject=f"Tu fichero convertido: {output_filename}",
+            html_content=f"<strong>Hola,</strong><br>hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br>Puedes descargarlo adjunto en este correo."
+        )
 
-            encoded_file = base64.b64encode(docx_buffer).decode()
-            attachment = Attachment(
-                FileContent(encoded_file),
-                FileName(output_filename),
-                FileType('application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-                Disposition('attachment')
-            )
-            message.attachment = attachment
+        encoded_file = base64.b64encode(docx_buffer).decode()
+        attachment = Attachment(
+            FileContent(encoded_file),
+            FileName(output_filename),
+            FileType('application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+            Disposition('attachment')
+        )
+        message.attachment = attachment
 
         try:
             sg = SendGridAPIClient(SENDGRID_API_KEY)
