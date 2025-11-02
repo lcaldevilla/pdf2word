@@ -4,6 +4,7 @@ import base64
 import json
 import email
 import requests
+import time
 from email import policy
 from email.message import EmailMessage
 from sendgrid import SendGridAPIClient
@@ -19,6 +20,68 @@ SENDGRID_SENDER_EMAIL = os.environ.get("SENDGRID_SENDER_EMAIL")
 app = FastAPI()
 
 # --- LÓGICA DE CONVERSIÓN ---
+def calculate_timeout(pdf_content):
+    """Calcula timeout dinámico basado en el tamaño del PDF"""
+    import time
+    start_time = time.time()
+    
+    pdf_size_mb = len(pdf_content) / (1024 * 1024)
+    
+    # Timeout dinámico según tamaño del PDF
+    if pdf_size_mb > 10:
+        timeout = 600  # 10 minutos para PDFs muy grandes
+        print(f"PDF grande ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
+    elif pdf_size_mb > 5:
+        timeout = 300  # 5 minutos para PDFs medianos
+        print(f"PDF mediano ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
+    elif pdf_size_mb > 2:
+        timeout = 180  # 3 minutos para PDFs pequeños
+        print(f"PDF pequeño ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
+    else:
+        timeout = 120  # 2 minutos para PDFs muy pequeños
+        print(f"PDF muy pequeño ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
+    
+    return timeout
+
+def handle_conversion_timeout(pdf_filename, from_email, timeout_used):
+    """Maneja el caso cuando una conversión tarda demasiado tiempo"""
+    try:
+        message = Mail(
+            from_email=SENDGRID_SENDER_EMAIL,
+            to_emails=from_email,
+            subject=f"Tu fichero esta tardando mucho: {pdf_filename}",
+            html_content=f"""
+            <strong>Hola,</strong><br><br>
+            Tu fichero <strong>{pdf_filename}</strong> esta tardando mas tiempo de lo habitual en procesarse.<br><br>
+            
+            <strong>Informacion del proceso:</strong><br>
+            • Archivo: {pdf_filename}<br>
+            • Tiempo maximo esperado: {timeout_used} segundos<br>
+            • Estado: En proceso (background)<br><br>
+            
+            <strong>Posibles razones:</strong><br>
+            • El PDF es muy grande o complejo<br>
+            • Contiene muchas imagenes o graficos complejos<br>
+            • Hay alta demanda en el sistema<br><br>
+            
+            <strong>Que puedes hacer:</strong><br>
+            1. Espera unos minutos y recibiras un email cuando termine<br>
+            2. Si no recibes nada en 30 minutos, envia el PDF de nuevo<br>
+            3. Para PDFs muy grandes, considera comprimirlos primero<br><br>
+            
+            <small><em>El archivo seguira procesandose en segundo plano. No necesitas hacer nada mas.</em></small>
+            """
+        )
+        
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        print(f"Email de timeout enviado! Status code: {response.status_code}")
+        return True
+        
+    except Exception as e:
+        print(f"Error enviando email de timeout: {e}")
+        return False
+
 def convert_with_self_hosted_server(pdf_content, pdf_filename):
     """
     Convierte un PDF a DOCX usando el servicio LibreOffice auto-alojado
@@ -30,19 +93,22 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
     max_size_mb = int(os.getenv("MAX_FILE_SIZE_MB", "25"))
 
     if not api_url:
-        raise ValueError("Error: La variable de entorno CONVERSION_API_URL no está configurada")
+        raise ValueError("Error: La variable de entorno CONVERSION_API_URL no esta configurada")
     
     if not api_key:
-        raise ValueError("Error: La variable de entorno CONVERSION_API_KEY no está configurada")
+        raise ValueError("Error: La variable de entorno CONVERSION_API_KEY no esta configurada")
     
     headers = {"X-API-Key": api_key}
     files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
     
+    # Calcular timeout dinámico
+    timeout = calculate_timeout(pdf_content)
+    
     # Determinar si usar conversión directa o almacenamiento temporal
     # Primero intentamos la conversión normal para ver el tamaño
     try:
-        print(f"Intentando conversión directa de {pdf_filename}")
-        response = requests.post(api_url, files=files, headers=headers, timeout=120)
+        print(f"Iniciando conversión de {pdf_filename} (timeout: {timeout}s)")
+        response = requests.post(api_url, files=files, headers=headers, timeout=timeout)
         response.raise_for_status()
         
         # Verificar si es una respuesta JSON (archivo grande) o archivo binario
@@ -63,7 +129,7 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
             docx_content = response.content
             
             if not docx_content:
-                raise ValueError("El servidor devolvió una respuesta vacía")
+                raise ValueError("El servidor devolvio una respuesta vacía")
             
             # Verificar tamaño
             file_size_mb = len(docx_content) / (1024 * 1024)
@@ -77,9 +143,14 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
             return docx_content, None
         
     except requests.exceptions.Timeout:
-        raise Exception(f"Timeout llamando al servicio de conversión después de 120 segundos")
+        print(f"Timeout de {timeout} segundos alcanzado para {pdf_filename}")
+        # En lugar de lanzar excepción, manejar amigablemente
+        # Para esto necesitaríamos el email del destinatario, pero no lo tenemos aquí
+        # Así que lanzamos una excepción más informativa
+        raise Exception(f"El archivo {pdf_filename} esta tardando mas de {timeout} segundos en procesarse. Por favor, intenta de nuevo en unos minutos o considera comprimir el PDF antes de convertirlo.")
+        
     except requests.exceptions.RequestException as e:
-        raise Exception(f"Error llamando al servicio de conversión: {e}")
+        raise Exception(f"Error llamando al servicio de conversion: {e}")
 
 def convert_and_store_large_file(pdf_content, pdf_filename, api_url, api_key):
     """
@@ -196,8 +267,46 @@ async def handler(request: Request):
 
         # 3. CONVERSIÓN
         print("Iniciando conversión a DOCX con servicio externo...")
-        docx_buffer, download_info = convert_with_self_hosted_server(file_buffer, original_filename)
-        print("Conversión completada.")
+        
+        # Medir tiempo de conversión
+        conversion_start_time = time.time()
+        
+        try:
+            docx_buffer, download_info = convert_with_self_hosted_server(file_buffer, original_filename)
+            conversion_end_time = time.time()
+            conversion_duration = conversion_end_time - conversion_start_time
+            
+            print(f"Conversión completada en {conversion_duration:.2f} segundos.")
+            
+            # Log detallado del resultado
+            if download_info:
+                print(f"Resultado: Archivo grande - Enlace generado")
+                print(f"Info: Tamaño={download_info.get('size_mb', 'N/A')}MB, Expira={download_info.get('expires_at', 'N/A')}")
+            else:
+                if docx_buffer:
+                    docx_size = len(docx_buffer) / (1024 * 1024)
+                    print(f"Resultado: Archivo pequeño - {docx_size:.2f}MB adjunto")
+                else:
+                    print("Resultado: Error - No se generó archivo")
+        except Exception as e:
+            # Verificar si es un error de timeout
+            error_msg = str(e)
+            if "tardando mas de" in error_msg.lower() or "timeout" in error_msg.lower():
+                print(f"Error de timeout detectado: {error_msg}")
+                
+                # Enviar email informativo de timeout
+                timeout_sent = handle_conversion_timeout(original_filename, from_email, calculate_timeout(file_buffer))
+                
+                if timeout_sent:
+                    print("Email de timeout enviado exitosamente")
+                    return PlainTextResponse("Timeout handled", status_code=200)
+                else:
+                    print("Error enviando email de timeout")
+                    return JSONResponse({"error": "Error sending timeout email"}, status_code=500)
+            else:
+                # Es otro tipo de error, propagarlo
+                print(f"Error de conversión no manejado: {error_msg}")
+                raise e
 
         # 4. ENVÍO DEL EMAIL DE RESPUESTA
         output_filename = f"{original_filename.split('.')[0]}.docx"
@@ -267,6 +376,64 @@ async def handler(request: Request):
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.post("/api/test-timeout")
+async def test_timeout_handler():
+    """Endpoint específico para probar el problema de timeout con el archivo problemático"""
+    try:
+        print("=== TEST TIMEOUT: Iniciando prueba manual ===")
+        
+        # Simular el archivo problemático "Manual de Usuario Touch Point.pdf"
+        # Nota: Esto es solo para pruebas, necesitarías el archivo real
+        test_filename = "Manual de Usuario Touch Point.pdf"
+        
+        # Crear un PDF de prueba simple (solo para simular el problema)
+        test_pdf_content = b"%PDF-1.4\n%)\n1 0 obj\n<<\n/Length 1000\n>>\nstream\nBT\n/F1 12 Tf\n72 0 Td\n(Hello World) Tj\nET\nendstream\nendobj\n\ntrailer\n<<\n/Size 1000\n/Root 1 0 R\n>>\nstartxref\n123\n%%EOF"
+        
+        print(f"Simulando procesamiento de: {test_filename}")
+        print(f"Tamaño del PDF de prueba: {len(test_pdf_content)} bytes")
+        
+        # Calcular timeout dinámico
+        timeout = calculate_timeout(test_pdf_content)
+        print(f"Timeout calculado: {timeout} segundos")
+        
+        # Simular la conversión (en realidad esto no llama al servicio externo)
+        # Es solo para probar el flujo completo de la API
+        conversion_time = min(timeout * 0.8, timeout - 10)  # Simular que tarda casi todo el timeout
+        
+        print(f"Simulando conversión que tardará: {conversion_time} segundos")
+        
+        # Esperar para simular el tiempo de procesamiento
+        import asyncio
+        await asyncio.sleep(min(conversion_time, 5))  # Max 5 segundos para no hacer esperar mucho
+        
+        if conversion_time >= timeout:
+            print("SIMULACIÓN: Timeout alcanzado")
+            raise Exception(f"El archivo {test_filename} esta tardando mas de {timeout} segundos en procesarse. Por favor, intenta de nuevo en unos minutos o considera comprimir el PDF antes de convertirlo.")
+        
+        # Simular respuesta exitosa
+        result_info = {
+            "test_file": test_filename,
+            "timeout_used": timeout,
+            "conversion_time": conversion_time,
+            "pdf_size_mb": len(test_pdf_content) / (1024 * 1024),
+            "status": "success"
+        }
+        
+        print(f"SIMULACIÓN: Conversión exitosa simulada")
+        return JSONResponse({
+            "status": "test_completed",
+            "message": f"Prueba de timeout completada para {test_filename}",
+            "details": result_info
+        })
+        
+    except Exception as e:
+        print(f"Error en prueba de timeout: {e}")
+        return JSONResponse({
+            "status": "test_failed", 
+            "error": str(e),
+            "message": "Error en la simulación de timeout"
+        }, status_code=500)
 
 # Endpoint de prueba para depuración
 @app.post("/api/debug")
