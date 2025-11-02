@@ -22,10 +22,12 @@ app = FastAPI()
 def convert_with_self_hosted_server(pdf_content, pdf_filename):
     """
     Convierte un PDF a DOCX usando el servicio LibreOffice auto-alojado
+    Retorna: (docx_content, download_info) donde download_info es None o un dict con info de descarga
     """
     # Obtener variables de entorno
     api_url = os.getenv("CONVERSION_API_URL")
     api_key = os.getenv("CONVERSION_API_KEY")
+    max_size_mb = int(os.getenv("MAX_FILE_SIZE_MB", "25"))
 
     if not api_url:
         raise ValueError("Error: La variable de entorno CONVERSION_API_URL no está configurada")
@@ -36,30 +38,70 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
     headers = {"X-API-Key": api_key}
     files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
     
+    # Determinar si usar conversión directa o almacenamiento temporal
+    # Primero intentamos la conversión normal para ver el tamaño
     try:
-        print(f"Enviando {pdf_filename} a {api_url}")
+        print(f"Intentando conversión directa de {pdf_filename}")
         response = requests.post(api_url, files=files, headers=headers, timeout=120)
         response.raise_for_status()
         
-        # Validar que la respuesta sea un archivo DOCX válido
+        # Verificar si es una respuesta JSON (archivo grande) o archivo binario
         content_type = response.headers.get('content-type', '').lower()
-        expected_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         
-        if expected_type not in content_type:
-            print(f"Advertencia: Content-Type inesperado: {content_type}")
-        
-        docx_content = response.content
-        
-        if not docx_content:
-            raise ValueError("El servidor devolvió una respuesta vacía")
-        
-        print(f"Conversión exitosa. Tamaño DOCX: {len(docx_content)} bytes")
-        return docx_content
+        if 'application/json' in content_type:
+            # Es un archivo grande, nos devuelve información de descarga
+            download_info = response.json()
+            print(f"Archivo grande, proporcionando enlace de descarga: {download_info}")
+            return None, download_info
+        else:
+            # Es un archivo directo, verificar tamaño
+            expected_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            
+            if expected_type not in content_type:
+                print(f"Advertencia: Content-Type inesperado: {content_type}")
+            
+            docx_content = response.content
+            
+            if not docx_content:
+                raise ValueError("El servidor devolvió una respuesta vacía")
+            
+            # Verificar tamaño
+            file_size_mb = len(docx_content) / (1024 * 1024)
+            print(f"Conversión directa exitosa. Tamaño DOCX: {file_size_mb:.2f} MB")
+            
+            if file_size_mb > max_size_mb:
+                # Archivo muy grande, intentar almacenamiento temporal
+                print(f"Archivo demasiado grande ({file_size_mb:.2f}MB > {max_size_mb}MB), intentando almacenamiento temporal")
+                return convert_and_store_large_file(pdf_content, pdf_filename, api_url, api_key)
+            
+            return docx_content, None
         
     except requests.exceptions.Timeout:
         raise Exception(f"Timeout llamando al servicio de conversión después de 120 segundos")
     except requests.exceptions.RequestException as e:
         raise Exception(f"Error llamando al servicio de conversión: {e}")
+
+def convert_and_store_large_file(pdf_content, pdf_filename, api_url, api_key):
+    """
+    Convierte y almacena un archivo grande usando el endpoint de almacenamiento temporal
+    """
+    headers = {"X-API-Key": api_key}
+    files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
+    
+    # Usar el endpoint de almacenamiento temporal
+    store_url = api_url.replace('/convert', '/convert-and-store')
+    
+    try:
+        print(f"Enviando archivo grande a almacenamiento temporal: {store_url}")
+        response = requests.post(store_url, files=files, headers=headers, timeout=180)
+        response.raise_for_status()
+        
+        download_info = response.json()
+        print(f"Archivo almacenado exitosamente: {download_info}")
+        return None, download_info
+        
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Error almacenando archivo temporal: {e}")
 
 # --- ENDPOINT DE LA API ---
 @app.post("/api/convert")
@@ -154,27 +196,56 @@ async def handler(request: Request):
 
         # 3. CONVERSIÓN
         print("Iniciando conversión a DOCX con servicio externo...")
-        docx_buffer = convert_with_self_hosted_server(file_buffer, original_filename)
+        docx_buffer, download_info = convert_with_self_hosted_server(file_buffer, original_filename)
         print("Conversión completada.")
 
         # 4. ENVÍO DEL EMAIL DE RESPUESTA
         output_filename = f"{original_filename.split('.')[0]}.docx"
         
-        message = Mail(
-            from_email=SENDGRID_SENDER_EMAIL,
-            to_emails=from_email,
-            subject=f"Tu fichero convertido: {output_filename}",
-            html_content=f"<strong>Hola,</strong><br>hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br>Puedes descargarlo adjunto en este correo."
-        )
+        if download_info:
+            # Archivo grande - enviar enlace de descarga
+            base_url = os.getenv("CONVERSION_API_URL", "").replace('/convert', '')
+            download_url = f"{base_url}{download_info['download_url']}"
+            expires_at = download_info['expires_at']
+            size_mb = download_info['size_mb']
+            
+            message = Mail(
+                from_email=SENDGRID_SENDER_EMAIL,
+                to_emails=from_email,
+                subject=f"Tu fichero convertido: {output_filename}",
+                html_content=f"""
+                <strong>Hola,</strong><br><br>
+                Hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br><br>
+                
+                <strong>Información del archivo:</strong><br>
+                • Nombre: {output_filename}<br>
+                • Tamaño: {size_mb} MB<br>
+                • Válido hasta: {expires_at}<br><br>
+                
+                El archivo es demasiado grande para enviarlo por email, pero puedes descargarlo desde el siguiente enlace:<br><br>
+                
+                <a href="{download_url}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Descargar Archivo</a><br><br>
+                
+                <small><em>Este enlace expirará en 24 horas por seguridad.</em></small>
+                """
+            )
+        else:
+            # Archivo pequeño - enviar adjunto directo
+            message = Mail(
+                from_email=SENDGRID_SENDER_EMAIL,
+                to_emails=from_email,
+                subject=f"Tu fichero convertido: {output_filename}",
+                html_content=f"<strong>Hola,</strong><br>hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br>Puedes descargarlo adjunto en este correo."
+            )
 
-        encoded_file = base64.b64encode(docx_buffer).decode()
-        attachment = Attachment(
-            FileContent(encoded_file),
-            FileName(output_filename),
-            FileType('application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-            Disposition('attachment')
-        )
-        message.attachment = attachment
+            encoded_file = base64.b64encode(docx_buffer).decode()
+            attachment = Attachment(
+                FileContent(encoded_file),
+                FileName(output_filename),
+                FileType('application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+                Disposition('attachment')
+            )
+            message.attachment = attachment
 
         try:
             sg = SendGridAPIClient(SENDGRID_API_KEY)
