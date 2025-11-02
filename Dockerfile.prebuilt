@@ -1,0 +1,27 @@
+# Usar imagen con LibreOffice pre-instalado
+FROM ghcr.io/linuxserver/libreoffice:latest
+
+# Cambiar al directorio de trabajo
+WORKDIR /app
+
+# Instalar Python si no está disponible
+RUN if ! command -v python3 &> /dev/null; then \
+        apt-get update && \
+        apt-get install -y python3 python3-pip && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Copiar requirements.txt
+COPY requirements.txt .
+
+# Instalar dependencias Python
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copiar el resto del código
+COPY . .
+
+# Exponer puerto
+EXPOSE 8000
+
+# Ejecutar la app
+CMD ["sh", "-c", "python3 -m uvicorn api.convert:app --host 0.0.0.0 --port ${PORT:-8000}"]

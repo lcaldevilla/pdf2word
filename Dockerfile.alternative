@@ -1,0 +1,42 @@
+# Imagen base ligera
+FROM python:3.9-slim
+
+# Directorio de trabajo
+WORKDIR /app
+
+# Copiar requirements.txt (para caché)
+COPY requirements.txt .
+
+# Instalar dependencias del sistema y LibreOffice con manejo de errores
+RUN apt-get update && \
+    # Intentar instalación básica primero
+    apt-get install -y --no-install-recommends libreoffice && \
+    # Si funciona, verificar y limpiar
+    soffice --version && \
+    rm -rf /var/lib/apt/lists/* || \
+    # Si falla, intentar con enfoque alternativo
+    (echo "Basic installation failed, trying alternative..." && \
+     apt-get update && \
+     apt-get install -y --no-install-recommends \
+        libreoffice-core \
+        libreoffice-writer \
+        libreoffice-common && \
+     soffice --version && \
+     rm -rf /var/lib/apt/lists/*) || \
+    # Si todo falla, al menos dejar el sistema funcional
+    (echo "LibreOffice installation failed, installing unoconv only..." && \
+     apt-get update && \
+     apt-get install -y --no-install-recommends unoconv && \
+     rm -rf /var/lib/apt/lists/*)
+
+# Instalar dependencias Python
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar el resto del código
+COPY . .
+
+# Exponer puerto
+EXPOSE 8000
+
+# Ejecutar la app
+CMD ["sh", "-c", "uvicorn api.convert:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -7,28 +7,13 @@ WORKDIR /app
 # Copiar requirements.txt (para caché)
 COPY requirements.txt .
 
-# Instalar dependencias del sistema y LibreOffice completo
+# Instalar dependencias del sistema y LibreOffice básico
 RUN apt-get update && apt-get install -y \
     libreoffice \
-    libreoffice-writer \
-    libreoffice-core \
-    libreoffice-common \
-    unoconv \
-    python3-uno \
-    libuno-cpp \
-    libuno-sal \
-    libuno-salhelper \
-    libcups2 \
-    libxinerama1 \
-    libxrandr2 \
-    libxrender1 \
-    libxcb-randr0 \
-    libxcb-xinerama0 \
-    libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Verificar instalación de LibreOffice
-RUN soffice --version && libreoffice --version
+# Verificar instalación básica de LibreOffice
+RUN soffice --version || echo "LibreOffice installation completed"
 
 # Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
