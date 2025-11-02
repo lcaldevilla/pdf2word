@@ -5,6 +5,7 @@ import json
 import email
 import requests
 import time
+import re
 from email import policy
 from email.message import EmailMessage
 from sendgrid import SendGridAPIClient
@@ -42,6 +43,29 @@ def calculate_timeout(pdf_content):
         print(f"PDF muy pequeño ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
     
     return timeout
+
+def sanitize_filename(filename):
+    """Limpia el nombre de archivo para evitar problemas con caracteres especiales"""
+    # Extraer nombre base y extensión
+    name, ext = os.path.splitext(filename)
+    
+    # Reemplazar caracteres problemáticos con guiones bajos
+    # Permitir solo letras, números, guiones, guiones bajos y puntos
+    cleaned_name = re.sub(r'[^\w\-_\.]', '_', name)
+    
+    # Limitar longitud del nombre (sin extensión)
+    if len(cleaned_name) > 45:
+        cleaned_name = cleaned_name[:45]
+    
+    # Reconstruir filename con extensión original
+    cleaned_filename = cleaned_name + ext
+    
+    # Si después de la limpieza queda vacío, usar un nombre por defecto
+    if not cleaned_name or cleaned_name.isspace():
+        cleaned_filename = "document" + ext
+    
+    print(f"Nombre de archivo sanitizado: '{filename}' → '{cleaned_filename}'")
+    return cleaned_filename
 
 def handle_conversion_timeout(pdf_filename, from_email, timeout_used):
     """Maneja el caso cuando una conversión tarda demasiado tiempo"""
@@ -165,6 +189,44 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
         raise Exception(f"El archivo {pdf_filename} esta tardando mas de {timeout} segundos en procesarse. Por favor, intenta de nuevo en unos minutos o considera comprimir el PDF antes de convertirlo.")
         
     except requests.exceptions.RequestException as e:
+        # Capturar detalles específicos del error 422
+        from datetime import datetime
+        
+        if hasattr(e, 'response') and e.response is not None:
+            status_code = e.response.status_code
+            content_type = e.response.headers.get('content-type', '')
+            
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error HTTP {status_code}")
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Content-Type: {content_type}")
+            
+            try:
+                if 'application/json' in content_type:
+                    error_details = e.response.json()
+                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error JSON: {error_details}")
+                    
+                    # Si es error 422, dar detalles específicos
+                    if status_code == 422:
+                        detail = error_details.get('detail', str(error_details))
+                        raise Exception(f"Error 422 del servidor: {detail}")
+                    
+                    raise Exception(f"Error del servidor {status_code}: {error_details}")
+                else:
+                    error_text = e.response.text
+                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error texto: {error_text}")
+                    
+                    if status_code == 422:
+                        raise Exception(f"Error 422 del servidor: {error_text}")
+                    
+                    raise Exception(f"Error del servidor {status_code}: {error_text}")
+            except:
+                error_text = e.response.text
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error texto (fallback): {error_text[:200]}")
+                
+                if status_code == 422:
+                    raise Exception(f"Error 422 del servidor: {error_text[:100]}")
+                
+                raise Exception(f"Error del servidor {status_code}: {error_text[:100]}")
+        
         raise Exception(f"Error llamando al servicio de conversion: {e}")
 
 def convert_and_store_large_file(pdf_content, pdf_filename, api_url, api_key):
@@ -268,7 +330,11 @@ async def handler(request: Request):
         original_filename = pdf_attachment['filename']
         file_buffer = pdf_attachment['content']
         
+        # Sanitizar el nombre del archivo para evitar problemas
+        sanitized_filename = sanitize_filename(original_filename)
+        
         print(f"Procesando archivo: {original_filename}")
+        print(f"Nombre sanitizado: {sanitized_filename}")
 
         # 2. VALIDACIÓN
         is_pdf = original_filename.lower().endswith('.pdf')
@@ -287,7 +353,7 @@ async def handler(request: Request):
         conversion_start_time = time.time()
         
         try:
-            docx_buffer, download_info = convert_with_self_hosted_server(file_buffer, original_filename)
+            docx_buffer, download_info = convert_with_self_hosted_server(file_buffer, sanitized_filename)
             conversion_end_time = time.time()
             conversion_duration = conversion_end_time - conversion_start_time
             
