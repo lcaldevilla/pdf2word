@@ -124,7 +124,7 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
     if not api_key:
         raise ValueError("Error: La variable de entorno CONVERSION_API_KEY no esta configurada")
     
-    headers = {"X-API-Key": api_key}
+    headers = {"api-key": api_key}
     files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
     
     # Calcular timeout dinámico
@@ -233,7 +233,7 @@ def convert_and_store_large_file(pdf_content, pdf_filename, api_url, api_key):
     """
     Convierte y almacena un archivo grande usando el endpoint de almacenamiento temporal
     """
-    headers = {"X-API-Key": api_key}
+    headers = {"api-key": api_key}
     files = {'file': (pdf_filename, pdf_content, 'application/pdf')}
     
     # Usar el endpoint de almacenamiento temporal

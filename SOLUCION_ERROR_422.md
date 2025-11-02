@@ -156,14 +156,53 @@ Para probar la solución:
    - Archivo DOCX adjunto o enlace de descarga
    - Sin errores 422
 
-## 🎉 Conclusión
+## 🔧 Última Corrección: Header API-Key
 
-La solución implementada resuelve el problema de **manera robusta y permanente**:
+### Problema Detectado
+Después de implementar la sanitización, el logging mejorado reveló un nuevo error:
+
+```
+[07:42:59.793] Error JSON: {'detail': [{'type': 'missing', 'loc': ['header', 'api-key'], 'msg': 'Field required', 'input': None}]}
+```
+
+El servidor externo esperaba el header `api-key` pero Railway estaba enviando `X-API-Key`.
+
+### Solución Aplicada
+Se cambió el header HTTP en todas las llamadas al servidor externo:
+
+```python
+# Antes:
+headers = {"X-API-Key": api_key}
+
+# Después:
+headers = {"api-key": api_key}
+```
+
+### Cambios Realizados
+1. **`convert_with_self_hosted_server()`**: Header actualizado
+2. **`convert_and_store_large_file()`**: Header actualizado
+
+## 🎉 Conclusión Final
+
+La solución completa resuelve ambos problemas de **manera robusta y permanente**:
 
 - ✅ **Sanitización automática** de nombres problemáticos
+- ✅ **Header correcto** para autenticación con servidor externo
 - ✅ **Mantenimiento de compatibilidad** con el flujo existente
 - ✅ **Mejora de diagnóstico** con logging detallado
 - ✅ **Sin dependencias externas** adicionales
 - ✅ **Retrocompatible** con cualquier tipo de PDF
 
-El sistema ahora debería procesar correctamente cualquier PDF, sin importar los caracteres en su nombre de archivo.
+## 🚀 Resultado Esperado
+
+**Logs exitosos:**
+```
+Nombre de archivo sanitizado: 'requerimeintos ddbb.pdf' → 'requerimeintos_ddbb.pdf'
+[07:42:59.792] Iniciando conversión de requerimeintos_ddbb.pdf (timeout: 120s)
+[07:43:01.180] Respuesta recibida en 1.88s
+[07:43:01.180] Status Code: 200
+Conversión completada en 2.15 segundos.
+Email enviado! Status code: 202
+```
+
+El sistema ahora debería procesar correctamente cualquier PDF, sin importar los caracteres en su nombre de archivo y con la autenticación correcta.
