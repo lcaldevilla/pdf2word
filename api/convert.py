@@ -87,6 +87,8 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
     Convierte un PDF a DOCX usando el servicio LibreOffice auto-alojado
     Retorna: (docx_content, download_info) donde download_info es None o un dict con info de descarga
     """
+    from datetime import datetime
+    
     # Obtener variables de entorno
     api_url = os.getenv("CONVERSION_API_URL")
     api_key = os.getenv("CONVERSION_API_KEY")
@@ -107,8 +109,21 @@ def convert_with_self_hosted_server(pdf_content, pdf_filename):
     # Determinar si usar conversión directa o almacenamiento temporal
     # Primero intentamos la conversión normal para ver el tamaño
     try:
-        print(f"Iniciando conversión de {pdf_filename} (timeout: {timeout}s)")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Iniciando conversión de {pdf_filename} (timeout: {timeout}s)")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Conectando a: {api_url}")
+        
+        # Medir tiempo de conexión específicamente
+        connection_start = time.time()
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Enviando solicitud HTTP...")
+        
         response = requests.post(api_url, files=files, headers=headers, timeout=timeout)
+        
+        connection_time = time.time() - connection_start
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Respuesta recibida en {connection_time:.2f}s")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Status Code: {response.status_code}")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Content-Type: {response.headers.get('content-type', 'N/A')}")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Content-Length: {response.headers.get('content-length', 'N/A')}")
+        
         response.raise_for_status()
         
         # Verificar si es una respuesta JSON (archivo grande) o archivo binario

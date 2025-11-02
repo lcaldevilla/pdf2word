@@ -215,3 +215,255 @@ async def download_file(file_id: str):
 @app.get("/")
 def read_root():
     return {"status": "API de conversión de PDF a DOCX funcionando."}
+
+@app.get("/health")
+async def detailed_health_check():
+    """Health check detallado que verifica LibreOffice y recursos del sistema"""
+    from datetime import datetime
+    import psutil
+    import os
+    
+    try:
+        health_info = {
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "checks": {}
+        }
+        
+        # 1. Verificar LibreOffice
+        try:
+            result = subprocess.run(['libreoffice', '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            health_info["checks"]["libreoffice"] = {
+                "status": "ok",
+                "version": result.stdout.strip(),
+                "error": None
+            }
+        except subprocess.TimeoutExpired:
+            health_info["checks"]["libreoffice"] = {
+                "status": "error",
+                "version": None,
+                "error": "LibreOffice timeout al verificar versión"
+            }
+        except FileNotFoundError:
+            health_info["checks"]["libreoffice"] = {
+                "status": "error", 
+                "version": None,
+                "error": "LibreOffice no encontrado en el sistema"
+            }
+        except Exception as e:
+            health_info["checks"]["libreoffice"] = {
+                "status": "error",
+                "version": None,
+                "error": f"Error verificando LibreOffice: {str(e)}"
+            }
+        
+        # 2. Verificar memoria disponible
+        try:
+            memory = psutil.virtual_memory()
+            health_info["checks"]["memory"] = {
+                "status": "ok",
+                "total_gb": round(memory.total / (1024**3), 2),
+                "available_gb": round(memory.available / (1024**3), 2),
+                "percent_used": memory.percent,
+                "warning": memory.percent > 90
+            }
+        except Exception as e:
+            health_info["checks"]["memory"] = {
+                "status": "error",
+                "error": f"Error verificando memoria: {str(e)}"
+            }
+        
+        # 3. Verificar espacio en disco
+        try:
+            disk = psutil.disk_usage('/')
+            health_info["checks"]["disk"] = {
+                "status": "ok",
+                "total_gb": round(disk.total / (1024**3), 2),
+                "free_gb": round(disk.free / (1024**3), 2),
+                "percent_used": (disk.used / disk.total) * 100,
+                "warning": (disk.used / disk.total) > 0.9
+            }
+        except Exception as e:
+            health_info["checks"]["disk"] = {
+                "status": "error",
+                "error": f"Error verificando disco: {str(e)}"
+            }
+        
+        # 4. Verificar archivos temporales
+        try:
+            temp_files_count = len(file_registry)
+            health_info["checks"]["temp_files"] = {
+                "status": "ok",
+                "count": temp_files_count,
+                "max_recommended": 100
+            }
+        except Exception as e:
+            health_info["checks"]["temp_files"] = {
+                "status": "error",
+                "error": f"Error verificando archivos temporales: {str(e)}"
+            }
+        
+        # 5. Estado general
+        # Si algún check está en error o tiene warning, cambiar el estado general
+        for check_name, check_data in health_info["checks"].items():
+            if check_data.get("status") == "error":
+                health_info["status"] = "error"
+                break
+            elif check_data.get("warning", False):
+                if health_info["status"] != "error":
+                    health_info["status"] = "warning"
+        
+        return JSONResponse(health_info)
+        
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "error": f"Error general en health check: {str(e)}"
+        }, status_code=500)
+
+@app.post("/test-libreoffice")
+async def test_libreoffice_conversion(api_key: str = Header(..., name="X-API-Key")):
+    """Endpoint para probar conversión con LibreOffice usando un PDF de prueba"""
+    if api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Clave de API inválida")
+    
+    from datetime import datetime
+    import tempfile
+    
+    try:
+        # Crear un PDF de prueba simple
+        test_pdf_content = b"""%PDF-1.4
+1 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+
+2 0 obj
+<<
+/Type /Pages
+/Kids [3 0 R]
+/Count 1
+>>
+endobj
+
+3 0 obj
+<<
+/Type /Page
+/Parent 2 0 R
+/MediaBox [0 0 612 792]
+/Contents 4 0 R
+/Resources <<
+/Font <<
+/F1 5 0 R
+>>
+>>
+>>
+endobj
+
+4 0 obj
+<<
+/Length 44
+>>
+stream
+BT
+/F1 12 Tf
+72 720 Td
+(Hello World) Tj
+ET
+endstream
+endobj
+
+5 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+>>
+endobj
+
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000054 00000 n 
+0000000115 00000 n 
+0000000258 00000 n 
+0000000345 00000 n 
+trailer
+<<
+/Size 6
+/Root 1 0 R
+>>
+startxref
+456
+%%EOF"""
+        
+        test_start = datetime.now()
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Crear PDF de prueba
+            pdf_path = os.path.join(tmpdir, "test.pdf")
+            with open(pdf_path, "wb") as f:
+                f.write(test_pdf_content)
+            
+            # Intentar conversión
+            command = [
+                'libreoffice',
+                '--headless',
+                '--convert-to', 'docx',
+                '--outdir', tmpdir,
+                pdf_path
+            ]
+            
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Ejecutando LibreOffice test...")
+            
+            process_start = time.time()
+            process = subprocess.run(command, check=True, capture_output=True, text=True, timeout=30)
+            process_time = time.time() - process_start
+            
+            # Verificar resultado
+            docx_path = os.path.join(tmpdir, "test.docx")
+            if os.path.exists(docx_path):
+                docx_size = os.path.getsize(docx_path)
+                test_end = datetime.now()
+                
+                return JSONResponse({
+                    "status": "success",
+                    "message": "LibreOffice funciona correctamente",
+                    "test_duration_seconds": round(process_time, 2),
+                    "docx_size_bytes": docx_size,
+                    "timestamp": test_end.isoformat(),
+                    "stdout": process.stdout,
+                    "stderr": process.stderr
+                })
+            else:
+                return JSONResponse({
+                    "status": "error",
+                    "message": "LibreOffice no generó el archivo DOCX",
+                    "test_duration_seconds": round(process_time, 2),
+                    "stdout": process.stdout,
+                    "stderr": process.stderr
+                }, status_code=500)
+                
+    except subprocess.TimeoutExpired:
+        return JSONResponse({
+            "status": "error",
+            "message": "LibreOffice timeout durante la prueba (30s)"
+        }, status_code=500)
+    except subprocess.CalledProcessError as e:
+        return JSONResponse({
+            "status": "error",
+            "message": "Error en LibreOffice durante la prueba",
+            "returncode": e.returncode,
+            "stdout": e.stdout,
+            "stderr": e.stderr
+        }, status_code=500)
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "message": f"Error inesperado durante prueba: {str(e)}"
+        }, status_code=500)

@@ -9,3 +9,6 @@ requests==2.31.0
 
 # Dependencias para parsear MIME de SendGrid
 python-magic==0.4.27
+
+# Dependencias para monitoreo del sistema
+psutil==5.9.6
