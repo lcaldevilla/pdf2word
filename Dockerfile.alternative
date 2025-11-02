@@ -7,24 +7,30 @@ WORKDIR /app
 # Copiar requirements.txt (para caché)
 COPY requirements.txt .
 
-# Instalar dependencias del sistema y LibreOffice con manejo de errores
+# Instalar dependencias del sistema y LibreOffice con manejo de errores y filtros
 RUN apt-get update && \
-    # Intentar instalación básica primero
-    apt-get install -y --no-install-recommends libreoffice && \
+    # Intentar instalación completa primero (con filtros)
+    apt-get install -y --no-install-recommends \
+        libreoffice \
+        libreoffice-writer \
+        libreoffice-core \
+        libreoffice-common \
+        libreoffice-filter-bin \
+        unoconv && \
     # Si funciona, verificar y limpiar
     soffice --version && \
     rm -rf /var/lib/apt/lists/* || \
     # Si falla, intentar con enfoque alternativo
-    (echo "Basic installation failed, trying alternative..." && \
+    (echo "Full installation failed, trying core components..." && \
      apt-get update && \
      apt-get install -y --no-install-recommends \
         libreoffice-core \
         libreoffice-writer \
-        libreoffice-common && \
+        unoconv && \
      soffice --version && \
      rm -rf /var/lib/apt/lists/*) || \
-    # Si todo falla, al menos dejar el sistema funcional
-    (echo "LibreOffice installation failed, installing unoconv only..." && \
+    # Si todo falla, al menos instalar unoconv (fallback principal)
+    (echo "All LibreOffice attempts failed, installing unoconv as primary fallback..." && \
      apt-get update && \
      apt-get install -y --no-install-recommends unoconv && \
      rm -rf /var/lib/apt/lists/*)

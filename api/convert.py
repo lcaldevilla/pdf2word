@@ -107,7 +107,7 @@ def handle_conversion_timeout(pdf_filename, from_email, timeout_used):
         return False
 
 def convert_pdf_to_docx_with_libreoffice(pdf_path, temp_dir, pdf_filename, timeout):
-    """Intenta convertir PDF a DOCX usando LibreOffice/soffice"""
+    """Intenta convertir PDF a DOCX usando LibreOffice/soffice con múltiples filtros"""
     import subprocess
     from datetime import datetime
     
@@ -116,38 +116,76 @@ def convert_pdf_to_docx_with_libreoffice(pdf_path, temp_dir, pdf_filename, timeo
     
     print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Intentando conversión con LibreOffice/soffice")
     
-    # Comando mejorado con soffice
-    command = [
-        'soffice',
-        '--headless',
-        '--writer',
-        '--convert-to', 'docx',
-        '--outdir', temp_dir,
-        pdf_path
+    # Estrategia 1: Filtro DOCX estándar
+    commands_to_try = [
+        {
+            'name': 'DOCX estándar',
+            'command': [
+                'soffice',
+                '--headless',
+                '--writer',
+                '--convert-to', 'docx',
+                '--outdir', temp_dir,
+                pdf_path
+            ]
+        },
+        {
+            'name': 'DOCX MS Word 2007',
+            'command': [
+                'soffice',
+                '--headless',
+                '--writer',
+                '--convert-to', 'docx:MS Word 2007 XML',
+                '--outdir', temp_dir,
+                pdf_path
+            ]
+        },
+        {
+            'name': 'DOCX OOXML',
+            'command': [
+                'soffice',
+                '--headless',
+                '--writer',
+                '--convert-to', 'docx:OpenDocument Text Flat XML',
+                '--outdir', temp_dir,
+                pdf_path
+            ]
+        }
     ]
     
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Ejecutando: {' '.join(command)}")
-    
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
+    for cmd_info in commands_to_try:
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Probando con filtro: {cmd_info['name']}")
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Ejecutando: {' '.join(cmd_info['command'])}")
         
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Return code: {result.returncode}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDOUT: {result.stdout}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDERR: {result.stderr}")
-        
-        if result.returncode == 0:
-            return True
-        else:
-            return False
+        try:
+            result = subprocess.run(
+                cmd_info['command'],
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
             
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error con LibreOffice: {e}")
-        return False
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Return code: {result.returncode}")
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDOUT: {result.stdout}")
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDERR: {result.stderr}")
+            
+            # Verificar si es éxito o error de filtro
+            if result.returncode == 0:
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✅ Éxito con filtro: {cmd_info['name']}")
+                return True
+            elif "no export filter" in result.stderr.lower():
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Filtro no disponible: {cmd_info['name']}")
+                continue  # Intentar siguiente filtro
+            else:
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Error con filtro: {cmd_info['name']}")
+                continue  # Intentar siguiente filtro
+                
+        except Exception as e:
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Error ejecutando filtro {cmd_info['name']}: {e}")
+            continue
+    
+    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Todos los filtros LibreOffice fallaron")
+    return False
 
 def convert_pdf_to_docx_with_unoconv(pdf_path, temp_dir, pdf_filename, timeout):
     """Intenta convertir PDF a DOCX usando unoconv como fallback"""
