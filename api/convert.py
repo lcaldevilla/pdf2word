@@ -116,21 +116,22 @@ def convert_pdf_to_docx_with_libreoffice(pdf_path, temp_dir, pdf_filename, timeo
     
     print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Intentando conversión con LibreOffice/soffice")
     
-    # Estrategia 1: Filtro DOCX estándar
+    # Estrategia 1: Forzar modo Writer con filtros específicos para PDF
     commands_to_try = [
         {
-            'name': 'DOCX estándar',
+            'name': 'Writer forzado - PDF a DOCX',
             'command': [
                 'soffice',
                 '--headless',
                 '--writer',
+                '--infilter=writer_pdf_import',  # Forzar importación PDF como Writer
                 '--convert-to', 'docx',
                 '--outdir', temp_dir,
                 pdf_path
             ]
         },
         {
-            'name': 'DOCX MS Word 2007',
+            'name': 'Writer directo - PDF a DOCX',
             'command': [
                 'soffice',
                 '--headless',
@@ -141,12 +142,24 @@ def convert_pdf_to_docx_with_libreoffice(pdf_path, temp_dir, pdf_filename, timeo
             ]
         },
         {
-            'name': 'DOCX OOXML',
+            'name': 'Writer con filtro explícito',
             'command': [
                 'soffice',
                 '--headless',
                 '--writer',
-                '--convert-to', 'docx:OpenDocument Text Flat XML',
+                '--infilter=writer_pdf_import',
+                '--convert-to', 'docx',
+                '--writer',  # Doble énfasis en Writer
+                '--outdir', temp_dir,
+                pdf_path
+            ]
+        },
+        {
+            'name': 'Fallback sin Writer (último recurso)',
+            'command': [
+                'soffice',
+                '--headless',
+                '--convert-to', 'docx',  # Sin especificar Writer
                 '--outdir', temp_dir,
                 pdf_path
             ]
