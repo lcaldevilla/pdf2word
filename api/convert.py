@@ -169,15 +169,34 @@ def convert_pdf_to_docx_with_libreoffice(pdf_path, temp_dir, pdf_filename, timeo
             print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDOUT: {result.stdout}")
             print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDERR: {result.stderr}")
             
-            # Verificar si es éxito o error de filtro
-            if result.returncode == 0:
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✅ Éxito con filtro: {cmd_info['name']}")
-                return True
-            elif "no export filter" in result.stderr.lower():
+            # Verificar errores específicos en stderr PRIMERO (más importante que returncode)
+            stderr_lower = result.stderr.lower()
+            
+            if "no export filter" in stderr_lower:
                 print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Filtro no disponible: {cmd_info['name']}")
                 continue  # Intentar siguiente filtro
-            else:
+            
+            elif "error" in stderr_lower or "failed" in stderr_lower or "aborting" in stderr_lower:
                 print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Error con filtro: {cmd_info['name']}")
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    Detalle: {result.stderr.strip()}")
+                continue  # Intentar siguiente filtro
+            
+            # Solo considerar éxito si no hay errores en stderr Y returncode es 0
+            elif result.returncode == 0 and not result.stderr.strip():
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✅ Éxito real con filtro: {cmd_info['name']}")
+                return True
+            
+            # Caso especial: returncode 0 pero con warnings (no errores críticos)
+            elif result.returncode == 0 and stderr_lower:
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ⚠️  Éxito con warnings: {cmd_info['name']}")
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    Warnings: {result.stderr.strip()}")
+                return True
+            
+            # Cualquier otro caso es error
+            else:
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Error desconocido con filtro: {cmd_info['name']}")
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    Return code: {result.returncode}")
+                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    STDERR: {result.stderr.strip()}")
                 continue  # Intentar siguiente filtro
                 
         except Exception as e:
