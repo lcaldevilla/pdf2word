@@ -75,6 +75,19 @@ Envía un PDF pequeño para verificar:
 - El email se envía con Gmail SMTP
 - El archivo DOCX adjunto se recibe correctamente
 
+## Pruebas locales (opcional)
+
+Si tienes Docker instalado localmente, puedes probar la construcción:
+
+```bash
+python test_docker_build.py
+```
+
+Este script verificará:
+- Que todos los archivos necesarios existen
+- Que el Dockerfile se construye correctamente
+- Que la imagen Docker se crea sin errores
+
 ## Si el problema persiste
 
 Si después de usar Docker aún tienes problemas:

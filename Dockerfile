@@ -31,15 +31,14 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+# Establecer el directorio de trabajo
+WORKDIR /app
+
 # Crear usuario no root para seguridad
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+RUN useradd -m -u 1000 appuser
 
 # Cambiar al usuario appuser
 USER appuser
-
-# Establecer el directorio de trabajo
-WORKDIR /app
 
 # Copiar requirements.txt y instalar dependencias Python
 COPY requirements.txt .
