@@ -59,4 +59,4 @@ COPY --chown=appuser:appuser railway.toml /app/
 EXPOSE 3000
 
 # Comando de inicio actualizado
-CMD ["python", "-m", "uvicorn", "api.convert:app", "--host", "0.0.0.0", "--port", "${PORT:-3000}"]
+CMD ["python3", "-m", "uvicorn", "api.convert:app", "--host", "0.0.0.0", "--port", "${PORT:-3000}"]
