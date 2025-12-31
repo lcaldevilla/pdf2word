@@ -10,11 +10,18 @@ type = "Docker"
 # GMAIL_APP_PASSWORD = ""
 
 [deploy]
-startCommand = "python3 -m uvicorn api.convert:app --host 0.0.0.0 --port $PORT"
+startCommand = "python3 -m uvicorn api.convert:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 300"
 
 [http]
 # Configuración del puerto HTTP
 port = 3000
+# Railway timeout configuration (en segundos)
+# Nota: Railway tiene límites de timeout según el plan
+# Free tier: típicamente 60 segundos para HTTP requests
+# Paid tier: puede ser mayor
+
+# Variables de entorno recomendadas para Railway:
+# RAILWAY_TIMEOUT_SECONDS=60  (para HTTP timeout)
 
 # Configuración de servicios
 # Railway detectará automáticamente los puertos necesarios

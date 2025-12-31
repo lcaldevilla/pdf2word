@@ -7,6 +7,7 @@ import smtplib
 import requests
 import time
 import re
+import tempfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -15,6 +16,9 @@ from email import policy
 from email.message import EmailMessage
 from fastapi import FastAPI, Request, Response, Form, File, UploadFile
 from fastapi.responses import PlainTextResponse, JSONResponse
+from pdf2docx import Converter
+from datetime import datetime
+from io import BytesIO
 
 # --- CONFIGURACIÓN INICIAL ---
 GMAIL_EMAIL = os.environ.get("GMAIL_EMAIL")
@@ -25,24 +29,21 @@ app = FastAPI()
 
 # --- LÓGICA DE CONVERSIÓN ---
 def calculate_timeout(pdf_content):
-    """Calcula timeout dinámico basado en el tamaño del PDF"""
-    import time
-    start_time = time.time()
-    
+    """Calcula timeout dinámico basado en el tamaño del PDF (optimizado para pdf2docx)"""
     pdf_size_mb = len(pdf_content) / (1024 * 1024)
     
-    # Timeout dinámico según tamaño del PDF
+    # Timeout más agresivo ya que pdf2docx es más rápido que LibreOffice
     if pdf_size_mb > 10:
-        timeout = 600  # 10 minutos para PDFs muy grandes
+        timeout = 300  # 5 minutos para PDFs muy grandes (antes 600s)
         print(f"PDF grande ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
     elif pdf_size_mb > 5:
-        timeout = 300  # 5 minutos para PDFs medianos
+        timeout = 180  # 3 minutos para PDFs medianos (antes 300s)
         print(f"PDF mediano ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
     elif pdf_size_mb > 2:
-        timeout = 180  # 3 minutos para PDFs pequeños
+        timeout = 90   # 1.5 minutos para PDFs pequeños (antes 180s)
         print(f"PDF pequeño ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
     else:
-        timeout = 120  # 2 minutos para PDFs muy pequeños
+        timeout = 45   # 45 segundos para PDFs muy pequeños (antes 120s)
         print(f"PDF muy pequeño ({pdf_size_mb:.2f}MB), usando timeout de {timeout} segundos")
     
     return timeout
@@ -144,250 +145,40 @@ def handle_conversion_timeout(pdf_filename, from_email, timeout_used):
         print(f"Error enviando email de timeout: {e}")
         return False
 
-def convert_pdf_to_docx_with_libreoffice(pdf_path, temp_dir, pdf_filename, timeout):
-    """Intenta convertir PDF a DOCX usando LibreOffice/soffice con múltiples filtros"""
-    import subprocess
-    from datetime import datetime
+def convert_pdf_to_docx_with_pdf2docx(pdf_content, pdf_filename, timeout):
+    """
+    Convierte PDF a DOCX usando pdf2docx library (más ligero que LibreOffice)
+    """
+    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Iniciando conversión con pdf2docx")
     
-    # Determinar nombre del archivo de salida
-    output_filename = pdf_filename.replace('.pdf', '.docx')
-    
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Intentando conversión con LibreOffice/soffice")
-    
-    # Estrategia 1: Forzar modo Writer con filtros específicos para PDF
-    commands_to_try = [
-        {
-            'name': 'Writer forzado - PDF a DOCX',
-            'command': [
-                'soffice',
-                '--headless',
-                '--writer',
-                '--infilter=writer_pdf_import',  # Forzar importación PDF como Writer
-                '--convert-to', 'docx',
-                '--outdir', temp_dir,
-                pdf_path
-            ]
-        },
-        {
-            'name': 'Writer directo - PDF a DOCX',
-            'command': [
-                'soffice',
-                '--headless',
-                '--writer',
-                '--convert-to', 'docx:MS Word 2007 XML',
-                '--outdir', temp_dir,
-                pdf_path
-            ]
-        },
-        {
-            'name': 'Writer con filtro explícito',
-            'command': [
-                'soffice',
-                '--headless',
-                '--writer',
-                '--infilter=writer_pdf_import',
-                '--convert-to', 'docx',
-                '--writer',  # Doble énfasis en Writer
-                '--outdir', temp_dir,
-                pdf_path
-            ]
-        },
-        {
-            'name': 'Fallback sin Writer (último recurso)',
-            'command': [
-                'soffice',
-                '--headless',
-                '--convert-to', 'docx',  # Sin especificar Writer
-                '--outdir', temp_dir,
-                pdf_path
-            ]
-        }
-    ]
-    
-    for cmd_info in commands_to_try:
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Probando con filtro: {cmd_info['name']}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Ejecutando: {' '.join(cmd_info['command'])}")
+    # Crear directorio temporal
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Guardar PDF en archivo temporal
+        pdf_path = os.path.join(temp_dir, pdf_filename)
+        with open(pdf_path, 'wb') as f:
+            f.write(pdf_content)
+        
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] PDF guardado en: {pdf_path}")
+        
+        # Definir ruta del archivo DOCX de salida
+        output_filename = pdf_filename.replace('.pdf', '.docx')
+        docx_path = os.path.join(temp_dir, output_filename)
+        
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Iniciando conversión a DOCX...")
+        
+        # Medir tiempo de conversión
+        conversion_start = time.time()
         
         try:
-            result = subprocess.run(
-                cmd_info['command'],
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Return code: {result.returncode}")
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDOUT: {result.stdout}")
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDERR: {result.stderr}")
-            
-            # Verificar errores específicos en stderr PRIMERO (más importante que returncode)
-            stderr_lower = result.stderr.lower()
-            
-            if "no export filter" in stderr_lower:
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Filtro no disponible: {cmd_info['name']}")
-                continue  # Intentar siguiente filtro
-            
-            elif "error" in stderr_lower or "failed" in stderr_lower or "aborting" in stderr_lower:
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Error con filtro: {cmd_info['name']}")
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    Detalle: {result.stderr.strip()}")
-                continue  # Intentar siguiente filtro
-            
-            # Solo considerar éxito si no hay errores en stderr Y returncode es 0
-            elif result.returncode == 0 and not result.stderr.strip():
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ✅ Éxito real con filtro: {cmd_info['name']}")
-                return True
-            
-            # Caso especial: returncode 0 pero con warnings (no errores críticos)
-            elif result.returncode == 0 and stderr_lower:
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ⚠️  Éxito con warnings: {cmd_info['name']}")
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    Warnings: {result.stderr.strip()}")
-                return True
-            
-            # Cualquier otro caso es error
-            else:
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Error desconocido con filtro: {cmd_info['name']}")
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    Return code: {result.returncode}")
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}]    STDERR: {result.stderr.strip()}")
-                continue  # Intentar siguiente filtro
-                
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Error ejecutando filtro {cmd_info['name']}: {e}")
-            continue
-    
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ❌ Todos los filtros LibreOffice fallaron")
-    return False
-
-def convert_pdf_to_docx_with_unoconv(pdf_path, temp_dir, pdf_filename, timeout):
-    """Intenta convertir PDF a DOCX usando unoconv como fallback"""
-    import subprocess
-    from datetime import datetime
-    
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Intentando conversión con unoconv (fallback)")
-    
-    # Comando con unoconv
-    command = [
-        'unoconv',
-        '-f', 'docx',
-        '-o', temp_dir,
-        pdf_path
-    ]
-    
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Ejecutando: {' '.join(command)}")
-    
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-        
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Return code: {result.returncode}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDOUT: {result.stdout}")
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] STDERR: {result.stderr}")
-        
-        if result.returncode == 0:
-            return True
-        else:
-            return False
-            
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error con unoconv: {e}")
-        return False
-
-def convert_pdf_to_docx_local(pdf_content, pdf_filename):
-    """
-    Convierte un PDF a DOCX usando LibreOffice con fallback a unoconv
-    Retorna: (docx_content, download_info) donde download_info siempre es None (conversión local)
-    """
-    import subprocess
-    import tempfile
-    import os
-    from datetime import datetime
-    
-    # Calcular timeout dinámico
-    timeout = calculate_timeout(pdf_content)
-    
-    try:
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Iniciando conversión local de {pdf_filename} (timeout: {timeout}s)")
-        
-        # Crear directorio temporal
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Guardar PDF en archivo temporal
-            pdf_path = os.path.join(temp_dir, pdf_filename)
-            with open(pdf_path, 'wb') as f:
-                f.write(pdf_content)
-            
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] PDF guardado en: {pdf_path}")
-            
-            # Intentar conversión con múltiples métodos
-            conversion_start = time.time()
-            
-            # Método 1: LibreOffice/soffice
-            libreoffice_success = convert_pdf_to_docx_with_libreoffice(pdf_path, temp_dir, pdf_filename, timeout)
-            
-            # Método 2: Fallback a unoconv si LibreOffice falla
-            if not libreoffice_success:
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] LibreOffice falló, intentando unoconv...")
-                unoconv_success = convert_pdf_to_docx_with_unoconv(pdf_path, temp_dir, pdf_filename, timeout)
-                
-                if not unoconv_success:
-                    raise Exception("Ambos métodos de conversión (LibreOffice y unoconv) fallaron")
+            # Usar pdf2docx para convertir
+            cv = Converter(pdf_path)
+            cv.convert(docx_path, start=0, end=None)
+            cv.close()
             
             conversion_time = time.time() - conversion_start
             print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Conversión completada en {conversion_time:.2f}s")
             
-            # Listar todos los archivos en el directorio para debugging
-            all_files = os.listdir(temp_dir)
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Archivos en directorio temporal: {all_files}")
-            
-            # Buscar cualquier archivo DOCX generado
-            docx_files = [f for f in all_files if f.lower().endswith('.docx')]
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Archivos DOCX encontrados: {docx_files}")
-            
-            # Si no encuentra .docx, buscar otros archivos que puedan ser DOCX
-            if not docx_files:
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Buscando archivos alternativos...")
-                alternative_files = [f for f in all_files if not f.endswith('.pdf')]
-                print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Archivos alternativos: {alternative_files}")
-                
-                # Intentar renombrar archivos alternativos
-                for alt_file in alternative_files:
-                    alt_path = os.path.join(temp_dir, alt_file)
-                    
-                    try:
-                        # Verificar si el archivo tiene contenido válido
-                        with open(alt_path, 'rb') as f:
-                            alt_content = f.read()
-                        
-                        # Si parece un DOCX (empieza con PK)
-                        if alt_content.startswith(b'PK'):
-                            if '.' not in alt_file:
-                                new_name = alt_file + '.docx'
-                            else:
-                                base_name = os.path.splitext(alt_file)[0]
-                                new_name = base_name + '.docx'
-                            
-                            new_path = os.path.join(temp_dir, new_name)
-                            os.rename(alt_path, new_path)
-                            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Renombrando '{alt_file}' a '{new_name}'")
-                            docx_files = [new_name]
-                            break
-                    except Exception as e:
-                        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error procesando archivo alternativo '{alt_file}': {e}")
-            
-            if not docx_files:
-                # Último intento: usar cualquier archivo no-PDF
-                non_pdf_files = [f for f in all_files if not f.endswith('.pdf')]
-                if non_pdf_files:
-                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Usando último archivo disponible: {non_pdf_files[0]}")
-                    docx_files = [non_pdf_files[0]]
-                else:
-                    raise Exception(f"No se encontró el archivo DOCX generado. Archivos en directorio: {all_files}")
-            
-            docx_path = os.path.join(temp_dir, docx_files[0])
-            
-            # Leer y validar el archivo DOCX generado
+            # Leer el archivo DOCX generado
             with open(docx_path, 'rb') as f:
                 docx_content = f.read()
             
@@ -397,17 +188,14 @@ def convert_pdf_to_docx_local(pdf_content, pdf_filename):
             
             # Verificar tamaño
             file_size_mb = len(docx_content) / (1024 * 1024)
-            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Conversión local exitosa. Tamaño DOCX: {file_size_mb:.2f} MB")
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Conversión exitosa. Tamaño DOCX: {file_size_mb:.2f} MB")
             
             return docx_content, None
-        
-    except subprocess.TimeoutExpired:
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Timeout de {timeout} segundos alcanzado para {pdf_filename}")
-        raise Exception(f"El archivo {pdf_filename} esta tardando mas de {timeout} segundos en procesarse. Por favor, intenta de nuevo en unos minutos o considera comprimir el PDF antes de convertirlo.")
-        
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error en conversión local: {e}")
-        raise Exception(f"Error en la conversión local: {e}")
+            
+        except Exception as e:
+            conversion_time = time.time() - conversion_start
+            print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Error en conversión después de {conversion_time:.2f}s: {e}")
+            raise Exception(f"Error en la conversión: {e}")
 
 # --- ENDPOINT DE LA API ---
 @app.post("/api/convert")
@@ -505,13 +293,17 @@ async def handler(request: Request):
             return PlainTextResponse("OK", status_code=200)
 
         # 3. CONVERSIÓN
-        print("Iniciando conversión a DOCX localmente con LibreOffice...")
+        print("Iniciando conversión a DOCX con pdf2docx...")
+        
+        # Calcular timeout dinámico
+        timeout = calculate_timeout(file_buffer)
+        print(f"Timeout configurado: {timeout} segundos")
         
         # Medir tiempo de conversión
         conversion_start_time = time.time()
         
         try:
-            docx_buffer, download_info = convert_pdf_to_docx_local(file_buffer, sanitized_filename)
+            docx_buffer, download_info = convert_pdf_to_docx_with_pdf2docx(file_buffer, sanitized_filename, timeout)
             conversion_end_time = time.time()
             conversion_duration = conversion_end_time - conversion_start_time
             
@@ -520,7 +312,7 @@ async def handler(request: Request):
             # Log detallado del resultado
             if docx_buffer:
                 docx_size = len(docx_buffer) / (1024 * 1024)
-                print(f"Resultado: Conversión local exitosa - {docx_size:.2f}MB adjunto")
+                print(f"Resultado: Conversión exitosa - {docx_size:.2f}MB adjunto")
             else:
                 print("Resultado: Error - No se generó archivo")
         except Exception as e:
@@ -530,7 +322,7 @@ async def handler(request: Request):
                 print(f"Error de timeout detectado: {error_msg}")
                 
                 # Enviar email informativo de timeout
-                timeout_sent = handle_conversion_timeout(original_filename, from_email, calculate_timeout(file_buffer))
+                timeout_sent = handle_conversion_timeout(original_filename, from_email, timeout)
                 
                 if timeout_sent:
                     print("Email de timeout enviado exitosamente")
@@ -581,15 +373,13 @@ async def health_check():
 
 @app.get("/api/diagnose")
 async def diagnose_environment():
-    """Endpoint para diagnosticar el entorno de LibreOffice en Railway"""
-    import subprocess
+    """Endpoint para diagnosticar el entorno de pdf2docx en Railway"""
     import platform
-    import os
     
     diagnosis = {
         "timestamp": datetime.now().isoformat(),
         "system": {},
-        "libreoffice": {},
+        "pdf2docx": {},
         "dependencies": {},
         "test_conversion": {}
     }
@@ -606,27 +396,18 @@ async def diagnose_environment():
             "working_directory": os.getcwd()
         }
         
-        # Verificar instalación de LibreOffice
+        # Verificar pdf2docx
         try:
-            result = subprocess.run(['soffice', '--version'], 
-                                capture_output=True, text=True, timeout=10)
-            diagnosis["libreoffice"]["soffice_version"] = result.stdout.strip()
-            diagnosis["libreoffice"]["soffice_available"] = True
+            import pdf2docx
+            diagnosis["pdf2docx"]["version"] = pdf2docx.__version__
+            diagnosis["pdf2docx"]["available"] = True
         except Exception as e:
-            diagnosis["libreoffice"]["soffice_error"] = str(e)
-            diagnosis["libreoffice"]["soffice_available"] = False
-        
-        try:
-            result = subprocess.run(['libreoffice', '--version'], 
-                                capture_output=True, text=True, timeout=10)
-            diagnosis["libreoffice"]["libreoffice_version"] = result.stdout.strip()
-            diagnosis["libreoffice"]["libreoffice_available"] = True
-        except Exception as e:
-            diagnosis["libreoffice"]["libreoffice_error"] = str(e)
-            diagnosis["libreoffice"]["libreoffice_available"] = False
+            diagnosis["pdf2docx"]["error"] = str(e)
+            diagnosis["pdf2docx"]["available"] = False
         
         # Verificar dependencias del sistema
         dependencies = ['file', 'python3', 'which', 'whereis']
+        import subprocess
         for dep in dependencies:
             try:
                 result = subprocess.run(['which', dep] if platform.system() != 'Windows' else ['where', dep], 
@@ -643,9 +424,6 @@ async def diagnose_environment():
         
         # Probar conversión simple
         try:
-            import tempfile
-            import base64
-            
             # Crear PDF de prueba muy simple
             simple_pdf = b"""%PDF-1.1
 1 0 obj
@@ -706,33 +484,25 @@ startxref
                 with open(pdf_path, 'wb') as f:
                     f.write(simple_pdf)
                 
-                command = [
-                    'soffice',
-                    '--headless',
-                    '--writer',
-                    '--convert-to', 'docx',
-                    '--outdir', temp_dir,
-                    pdf_path
-                ]
+                docx_path = os.path.join(temp_dir, "test.docx")
                 
-                result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                # Probar conversión con pdf2docx
+                cv = Converter(pdf_path)
+                cv.convert(docx_path, start=0, end=None)
+                cv.close()
                 
                 files_after = os.listdir(temp_dir)
                 docx_files = [f for f in files_after if f.endswith('.docx')]
                 
                 diagnosis["test_conversion"] = {
                     "success": len(docx_files) > 0,
-                    "return_code": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "files_before": ["test.pdf"],
                     "files_after": files_after,
                     "docx_files": docx_files
                 }
                 
                 if docx_files:
-                    docx_path = os.path.join(temp_dir, docx_files[0])
-                    with open(docx_path, 'rb') as f:
+                    docx_path_full = os.path.join(temp_dir, docx_files[0])
+                    with open(docx_path_full, 'rb') as f:
                         docx_content = f.read()
                     diagnosis["test_conversion"]["docx_size"] = len(docx_content)
                     diagnosis["test_conversion"]["docx_valid"] = docx_content.startswith(b'PK')
@@ -755,7 +525,6 @@ async def test_timeout_handler():
         print("=== TEST TIMEOUT: Iniciando prueba manual ===")
         
         # Simular el archivo problemático "Manual de Usuario Touch Point.pdf"
-        # Nota: Esto es solo para pruebas, necesitarías el archivo real
         test_filename = "Manual de Usuario Touch Point.pdf"
         
         # Crear un PDF de prueba simple (solo para simular el problema)

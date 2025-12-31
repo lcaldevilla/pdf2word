@@ -1,5 +1,5 @@
-# Dockerfile para file2word con LibreOffice en Railway
-# Basado en Ubuntu para tener LibreOffice disponible
+# Dockerfile para file2word con pdf2docx en Railway
+# Basado en Ubuntu 22.04
 
 # Usar Ubuntu 22.04 como base
 FROM ubuntu:22.04
@@ -10,8 +10,7 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PYTHONUNBUFFERED=1
 
-# Instalar todas las dependencias del sistema en una sola capa
-# Incluyendo herramientas de compilación para paquetes Python con C extensions
+# Instalar dependencias del sistema (más ligero sin LibreOffice)
 RUN apt-get update && apt-get install -y \
     build-essential \
     python3-dev \
@@ -19,10 +18,6 @@ RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     software-properties-common \
-    libreoffice \
-    libreoffice-writer \
-    libreoffice-calc \
-    libreoffice-impress \
     python3 \
     python3-pip \
     libmagic1 \

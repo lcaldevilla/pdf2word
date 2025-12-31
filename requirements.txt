@@ -11,3 +11,6 @@ python-magic==0.4.27
 
 # Dependencias para monitoreo del sistema
 psutil==5.9.6
+
+# Dependencias para conversión PDF a DOCX (más ligero que LibreOffice)
+pdf2docx==0.5.8
