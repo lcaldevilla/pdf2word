@@ -1,33 +1,56 @@
-# Imagen base ligera
-FROM python:3.9-slim
+# Dockerfile para file2word con LibreOffice en Railway
+# Basado en Ubuntu para tener LibreOffice disponible
 
-# Directorio de trabajo
-WORKDIR /app
+# Usar Ubuntu 22.04 como base
+FROM ubuntu:22.04
 
-# Copiar requirements.txt (para caché)
-COPY requirements.txt .
+# Configurar variables de entorno
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
-# Instalar dependencias del sistema y LibreOffice básico (paquetes existentes)
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    gnupg \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# Agregar repositorios de LibreOffice
 RUN apt-get update && apt-get install -y \
     libreoffice \
     libreoffice-writer \
-    libreoffice-core \
-    libreoffice-common \
-    libreoffice-java-common \
+    libreoffice-calc \
+    libreoffice-impress \
     && rm -rf /var/lib/apt/lists/*
 
-# Verificar instalación completa de LibreOffice
-RUN soffice --version && echo "LibreOffice installation completed successfully"
+# Instalar Python y pip
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
-# Instalar dependencias Python
-RUN pip install --no-cache-dir -r requirements.txt
+# Crear usuario no root para seguridad
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
 
-# Copiar el resto del código
-COPY . .
+# Cambiar al usuario appuser
+USER appuser
 
-# Exponer puerto
-EXPOSE 8000
+# Establecer el directorio de trabajo
+WORKDIR /app
 
-# Ejecutar la app from Railway
-# Ejecutar con uvicorn, usando $PORT de Railway
-CMD ["sh", "-c", "uvicorn api.convert:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Copiar requirements.txt y instalar dependencias Python
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copiar el código de la aplicación
+COPY api/ /app/api/
+COPY railway.toml /app/
+
+# Exponer el puerto
+EXPOSE 3000
+
+# Comando de inicio
+CMD ["uvicorn", "api.convert:app", "--host", "0.0.0.0", "--port", "3000"]
