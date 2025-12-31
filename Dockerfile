@@ -28,6 +28,6 @@ COPY . .
 # Exponer puerto
 EXPOSE 8000
 
-# Ejecutar la app
+# Ejecutar la app from Railway
 # Ejecutar con uvicorn, usando $PORT de Railway
 CMD ["sh", "-c", "uvicorn api.convert:app --host 0.0.0.0 --port ${PORT:-8000}"]
