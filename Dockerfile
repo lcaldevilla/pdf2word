@@ -11,7 +11,10 @@ ENV LC_ALL=C.UTF-8
 ENV PYTHONUNBUFFERED=1
 
 # Instalar todas las dependencias del sistema en una sola capa
+# Incluyendo herramientas de compilación para paquetes Python con C extensions
 RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
     curl \
     wget \
     gnupg \
@@ -26,12 +29,21 @@ RUN apt-get update && apt-get install -y \
     file \
     && rm -rf /var/lib/apt/lists/*
 
+# Actualizar pip y wheel para evitar problemas de compatibilidad
+RUN pip3 install --upgrade pip setuptools wheel
+
 # Crear directorio de trabajo y directorios temporales con permisos
 RUN mkdir -p /app /tmp /home/appuser/.cache
 
+# Copiar requirements.txt antes de cambiar usuario para poder instalar como root
+COPY requirements.txt .
+
+# Instalar dependencias Python como ROOT para evitar problemas de permisos
+RUN pip3 install --no-cache-dir -r requirements.txt
+
 # Crear usuario no root para seguridad
 RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app /tmp
+    chown -R appuser:appuser /app /tmp /home/appuser
 
 # Establecer el directorio de trabajo
 WORKDIR /app
@@ -39,11 +51,7 @@ WORKDIR /app
 # Cambiar al usuario appuser
 USER appuser
 
-# Copiar requirements.txt y instalar dependencias Python
-COPY --chown=appuser:appuser requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-# Copiar el código de la aplicación
+# Copiar el código de la aplicación (el código ya tiene permisos de appuser)
 COPY --chown=appuser:appuser api/ /app/api/
 COPY --chown=appuser:appuser railway.toml /app/
 
