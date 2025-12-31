@@ -3,11 +3,10 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
 # Dependencias de la Lógica de Negocio
-sendgrid==6.10.0
 python-multipart==0.0.6
 requests==2.31.0
 
-# Dependencias para parsear MIME de SendGrid
+# Dependencias para parsear MIME
 python-magic==0.4.27
 
 # Dependencias para monitoreo del sistema

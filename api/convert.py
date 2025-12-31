@@ -3,19 +3,22 @@ import os
 import base64
 import json
 import email
+import smtplib
 import requests
 import time
 import re
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from email import policy
 from email.message import EmailMessage
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 from fastapi import FastAPI, Request, Response, Form, File, UploadFile
 from fastapi.responses import PlainTextResponse, JSONResponse
 
 # --- CONFIGURACIÓN INICIAL ---
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")
-SENDGRID_SENDER_EMAIL = os.environ.get("SENDGRID_SENDER_EMAIL")
+GMAIL_EMAIL = os.environ.get("GMAIL_EMAIL")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 
 # Crear la aplicación FastAPI
 app = FastAPI()
@@ -67,40 +70,75 @@ def sanitize_filename(filename):
     print(f"Nombre de archivo sanitizado: '{filename}' → '{cleaned_filename}'")
     return cleaned_filename
 
+def send_email_with_gmail(to_email, subject, html_content, attachments=None):
+    """Envía email usando Gmail SMTP con adjuntos"""
+    try:
+        # Crear mensaje
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_EMAIL
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        # Adjuntar contenido HTML
+        msg.attach(MIMEText(html_content, 'html'))
+        
+        # Adjuntar archivos si se proporcionan
+        if attachments:
+            for attachment in attachments:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(attachment['content'])
+                encoders.encode_base64(part)
+                part.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename= {attachment["filename"]}',
+                )
+                msg.attach(part)
+        
+        # Conectar con Gmail SMTP
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
+        
+        # Enviar email
+        text = msg.as_string()
+        server.sendmail(GMAIL_EMAIL, to_email, text)
+        server.quit()
+        
+        print(f"Email enviado exitosamente a {to_email}")
+        return True
+        
+    except Exception as e:
+        print(f"Error enviando email con Gmail: {e}")
+        return False
+
 def handle_conversion_timeout(pdf_filename, from_email, timeout_used):
     """Maneja el caso cuando una conversión tarda demasiado tiempo"""
     try:
-        message = Mail(
-            from_email=SENDGRID_SENDER_EMAIL,
-            to_emails=from_email,
-            subject=f"Tu fichero esta tardando mucho: {pdf_filename}",
-            html_content=f"""
-            <strong>Hola,</strong><br><br>
-            Tu fichero <strong>{pdf_filename}</strong> esta tardando mas tiempo de lo habitual en procesarse.<br><br>
-            
-            <strong>Informacion del proceso:</strong><br>
-            • Archivo: {pdf_filename}<br>
-            • Tiempo maximo esperado: {timeout_used} segundos<br>
-            • Estado: En proceso (background)<br><br>
-            
-            <strong>Posibles razones:</strong><br>
-            • El PDF es muy grande o complejo<br>
-            • Contiene muchas imagenes o graficos complejos<br>
-            • Hay alta demanda en el sistema<br><br>
-            
-            <strong>Que puedes hacer:</strong><br>
-            1. Espera unos minutos y recibiras un email cuando termine<br>
-            2. Si no recibes nada en 30 minutos, envia el PDF de nuevo<br>
-            3. Para PDFs muy grandes, considera comprimirlos primero<br><br>
-            
-            <small><em>El archivo seguira procesandose en segundo plano. No necesitas hacer nada mas.</em></small>
-            """
-        )
+        subject = f"Tu fichero esta tardando mucho: {pdf_filename}"
+        html_content = f"""
+        <strong>Hola,</strong><br><br>
+        Tu fichero <strong>{pdf_filename}</strong> esta tardando mas tiempo de lo habitual en procesarse.<br><br>
         
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(message)
-        print(f"Email de timeout enviado! Status code: {response.status_code}")
-        return True
+        <strong>Informacion del proceso:</strong><br>
+        • Archivo: {pdf_filename}<br>
+        • Tiempo maximo esperado: {timeout_used} segundos<br>
+        • Estado: En proceso (background)<br><br>
+        
+        <strong>Posibles razones:</strong><br>
+        • El PDF es muy grande o complejo<br>
+        • Contiene muchas imagenes o graficos complejos<br>
+        • Hay alta demanda en el sistema<br><br>
+        
+        <strong>Que puedes hacer:</strong><br>
+        1. Espera unos minutos y recibiras un email cuando termine<br>
+        2. Si no recibes nada en 30 minutos, envia el PDF de nuevo<br>
+        3. Para PDFs muy grandes, considera comprimirlos primero<br><br>
+        
+        <small><em>El archivo seguira procesandose en segundo plano. No necesitas hacer nada mas.</em></small>
+        """
+        
+        success = send_email_with_gmail(from_email, subject, html_content)
+        return success
         
     except Exception as e:
         print(f"Error enviando email de timeout: {e}")
@@ -508,29 +546,24 @@ async def handler(request: Request):
         # 4. ENVÍO DEL EMAIL DE RESPUESTA
         output_filename = f"{original_filename.split('.')[0]}.docx"
         
-        # Archivo convertido - enviar adjunto directo
-        message = Mail(
-            from_email=SENDGRID_SENDER_EMAIL,
-            to_emails=from_email,
-            subject=f"Tu fichero convertido: {output_filename}",
-            html_content=f"<strong>Hola,</strong><br>hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br>Puedes descargarlo adjunto en este correo."
-        )
-
-        encoded_file = base64.b64encode(docx_buffer).decode()
-        attachment = Attachment(
-            FileContent(encoded_file),
-            FileName(output_filename),
-            FileType('application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-            Disposition('attachment')
-        )
-        message.attachment = attachment
-
+        # Archivo convertido - enviar adjunto directo con Gmail
+        subject = f"Tu fichero convertido: {output_filename}"
+        html_content = f"<strong>Hola,</strong><br>hemos convertido tu fichero <strong>{original_filename}</strong> a formato Word (.docx).<br>Puedes descargarlo adjunto en este correo."
+        
+        attachments = [{
+            'filename': output_filename,
+            'content': docx_buffer
+        }]
+        
         try:
-            sg = SendGridAPIClient(SENDGRID_API_KEY)
-            response = sg.send(message)
-            print(f"Email enviado! Status code: {response.status_code}")
+            success = send_email_with_gmail(from_email, subject, html_content, attachments)
+            if success:
+                print("Email enviado exitosamente con Gmail")
+            else:
+                print("Error al enviar email con Gmail")
+                return JSONResponse({"error": "Error sending email"}, status_code=500)
         except Exception as e:
-            print(f"Error al enviar email con SendGrid: {e}")
+            print(f"Error al enviar email con Gmail: {e}")
             return JSONResponse({"error": "Error sending email"}, status_code=500)
 
         return PlainTextResponse("OK", status_code=200)

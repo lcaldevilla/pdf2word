@@ -1,0 +1,20 @@
+# Configuración de Railway para file2word
+
+[build]
+command = "pip install -r requirements.txt"
+
+[env]
+# Variables de entorno para Gmail SMTP
+# Estas se configurarán en el panel de Railway
+# GMAIL_EMAIL = ""
+# GMAIL_APP_PASSWORD = ""
+
+[deploy]
+startCommand = "uvicorn api.convert:app --host 0.0.0.0 --port $PORT"
+
+[http]
+# Configuración del puerto HTTP
+port = 3000
+
+# Configuración de servicios
+# Railway detectará automáticamente los puertos necesarios
